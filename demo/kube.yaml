@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: demo-application
-          image: platformatic/watt-perf-demos-next:experiment-b3e184ad179ed02195d81e926be6aa11bbc0cc30
+          image: platformatic/watt-perf-demos-next:latest
           imagePullPolicy: Always
           env:
             - name: SCRIPT_NAME
@@ -79,7 +79,7 @@ spec:
     spec:
       containers:
         - name: demo-application
-          image: platformatic/watt-perf-demos-next:experiment-b3e184ad179ed02195d81e926be6aa11bbc0cc30
+          image: platformatic/watt-perf-demos-next:latest
           imagePullPolicy: Always
           env:
             - name: SCRIPT_NAME
@@ -143,7 +143,7 @@ spec:
     spec:
       containers:
         - name: demo-application
-          image: platformatic/watt-perf-demos-next:experiment-b3e184ad179ed02195d81e926be6aa11bbc0cc30
+          image: platformatic/watt-perf-demos-next:latest
           imagePullPolicy: Always
           env:
             - name: SCRIPT_NAME
