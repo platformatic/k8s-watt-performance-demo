@@ -18,7 +18,6 @@ import http from 'k6/http';
 import { check } from 'k6';
 
 export const options = {
-  throw: true,
   scenarios: {
     constant_arrival_rate: {
       executor: 'constant-arrival-rate',
