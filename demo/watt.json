@@ -1,0 +1,28 @@
+{
+  "$schema": "https://schemas.platformatic.dev/@platformatic/next/3.23.0.json",
+  "runtime": {
+    "logger": {
+      "level": "{PLT_SERVER_LOGGER_LEVEL}"
+    },
+    "verticalScaler": {
+      "enabled": false
+    },
+    "server": {
+      "hostname": "{HOSTNAME}",
+      "port": "{PORT}",
+      "backlog": "{BACKLOG}" 
+    },
+    "metrics": {
+      "enabled": "{PLT_SERVER_METRICS}"
+    },
+    "health": {
+      "enabled": "{PLT_SERVER_HEALTH}",
+      "maxHeapTotal": "2GB",
+      "maxYoungGeneration": "256MB"
+    },
+    "managementApi": false,
+    "workers": {
+      "static": "{WORKERS}"
+    }
+  }
+}

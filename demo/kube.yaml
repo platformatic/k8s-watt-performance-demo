@@ -1,0 +1,263 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: next
+  labels:
+    app.kubernetes.io/instance: next
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: next
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: next
+    spec:
+      containers:
+        - name: demo-application
+          image: platformatic/watt-perf-demos-next:experiment-b3e184ad179ed02195d81e926be6aa11bbc0cc30
+          imagePullPolicy: Always
+          env:
+            - name: SCRIPT_NAME
+              value: "start:node"
+          ports:
+            - name: 'app'
+              containerPort: 3000
+              protocol: 'TCP'
+          readinessProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            periodSeconds: 2
+            successThreshold: 1
+            timeoutSeconds: 1
+            failureThreshold: 5
+          startupProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            initialDelaySeconds: 10
+            periodSeconds: 3
+            successThreshold: 1
+            failureThreshold: 15
+          resources:
+            requests:
+              memory: '2Gi'
+              cpu: '1000m'
+            limits:
+              memory: '2Gi'
+              cpu: '1000m'
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: next-pm2
+  labels:
+    app.kubernetes.io/instance: next-pm2
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: next-pm2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: next-pm2
+    spec:
+      containers:
+        - name: demo-application
+          image: platformatic/watt-perf-demos-next:experiment-b3e184ad179ed02195d81e926be6aa11bbc0cc30
+          imagePullPolicy: Always
+          env:
+            - name: SCRIPT_NAME
+              value: "start:pm2r"
+            - name: WORKERS
+              value: "2"
+          ports:
+            - name: 'app'
+              containerPort: 3000
+              protocol: 'TCP'
+          readinessProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            periodSeconds: 2
+            successThreshold: 1
+            timeoutSeconds: 1
+            failureThreshold: 5
+          startupProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            initialDelaySeconds: 10
+            periodSeconds: 3
+            successThreshold: 1
+            failureThreshold: 15
+          resources:
+            requests:
+              memory: '4Gi'
+              cpu: '2000m'
+            limits:
+              memory: '4Gi'
+              cpu: '2000m'
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: next-watt
+  labels:
+    app.kubernetes.io/instance: next-watt
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: next-watt
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: next-watt
+    spec:
+      containers:
+        - name: demo-application
+          image: platformatic/watt-perf-demos-next:experiment-b3e184ad179ed02195d81e926be6aa11bbc0cc30
+          imagePullPolicy: Always
+          env:
+            - name: SCRIPT_NAME
+              value: "start:watt"
+            - name: WORKERS
+              value: "2"
+            - name: PLT_SERVER_METRICS
+              value: "false"
+            - name: PLT_SERVER_HEALTH
+              value: "true"
+            - name: BACKLOG
+              value: "1024"
+          ports:
+            - name: 'app'
+              containerPort: 3000
+              protocol: 'TCP'
+            - name: 'metrics'
+              containerPort: 9090
+              protocol: 'TCP'
+          readinessProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            periodSeconds: 2
+            successThreshold: 1
+            timeoutSeconds: 1
+            failureThreshold: 5
+          startupProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            initialDelaySeconds: 10
+            periodSeconds: 3
+            successThreshold: 1
+            failureThreshold: 15
+          resources:
+            requests:
+              memory: '4Gi'
+              cpu: '2000m'
+            limits:
+              memory: '4Gi'
+              cpu: '2000m'
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: next-watt
+  labels:
+    app.kubernetes.io/instance: next-watt
+  annotations:
+    benchmark.platformatic.dev/expose: "true"
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/instance: next-watt
+  ports:
+    - name: app
+      protocol: 'TCP'
+      port: 80
+      targetPort: 'app'
+      nodePort: 30002
+    - name: 'metrics'
+      protocol: 'TCP'
+      port: 9090
+      targetPort: 'metrics'
+      nodePort: 30090
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: next-pm2
+  labels:
+    app.kubernetes.io/instance: next-pm2
+  annotations:
+    benchmark.platformatic.dev/expose: "true"
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/instance: next-pm2
+  ports:
+    - name: app
+      protocol: 'TCP'
+      port: 80
+      targetPort: 'app'
+      nodePort: 30001
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: next
+  labels:
+    app.kubernetes.io/instance: next
+  annotations:
+    benchmark.platformatic.dev/expose: "true"
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/instance: next
+  ports:
+    - name: app
+      protocol: 'TCP'
+      port: 80
+      targetPort: 'app'
+      nodePort: 30000
