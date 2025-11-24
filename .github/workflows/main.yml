@@ -36,8 +36,7 @@ jobs:
         file: ./demo/Dockerfile
         platforms: linux/amd64,linux/arm64
         push: true
-        tags: |
-          platformatic/watt-perf-demos-next:latest
+        tags: platformatic/k8s-watt-performance-demo-next:latest,platformatic/k8s-watt-performance-demo-next:${{ github.sha }}
         build-args: |
           COMMIT_HASH=${{ github.sha }}
           BUILD_TIME=${{ github.event.repository.updated_at }}

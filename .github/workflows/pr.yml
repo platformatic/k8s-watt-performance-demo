@@ -3,7 +3,7 @@ name: Build demo images
 on:
   pull_request:
     paths:
-      - 'demos/**'
+      - 'demo/**'
 
 jobs:
   build-next:
@@ -34,8 +34,7 @@ jobs:
         file: ./demo/Dockerfile
         platforms: linux/amd64,linux/arm64
         push: true
-        tags: |
-          platformatic/watt-perf-demos-next:${{ github.sha }}
+        tags: platformatic/k8s-watt-performance-demo-next:${{ github.sha }}
         build-args: |
           COMMIT_HASH=${{ github.sha }}
           BUILD_TIME=${{ github.event.repository.updated_at }}
