@@ -1,4 +1,4 @@
-name: Build demo images
+name: Build demo preproduction image
 
 on:
   pull_request:

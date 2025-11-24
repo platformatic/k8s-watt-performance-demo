@@ -1,4 +1,4 @@
-name: Build demo images
+name: Build demo image
 
 on:
   push:
