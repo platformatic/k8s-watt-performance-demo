@@ -16,8 +16,10 @@ fi
 K6_SCRIPT=$(cat <<'EOF'
 import http from 'k6/http';
 import { check } from 'k6';
+import { Counter } from 'k6/metrics';
 
 export const options = {
+  throw: true,
   scenarios: {
     constant_arrival_rate: {
       executor: 'constant-arrival-rate',
@@ -34,13 +36,39 @@ export const options = {
   // noConnectionReuse: true, // Disable HTTP keep-alive, create new connection for each request
 };
 
+const errorCounts = new Counter('request_errors')
+
 export default function () {
-  const res = http.get(__ENV.TARGET, {
-    timeout: "5s"
-  });
-  check(res, {
-    'status is 200': (r) => r.status === 200,
-  });
+  const countMessages = [
+    'connection refused',
+    'request timeout'
+  ]
+
+  try {
+    const res = http.get(__ENV.TARGET, {
+      timeout: "5s"
+    });
+    check(res, {
+      'status is 200': (r) => r.status === 200,
+    });
+  } catch (err) {
+    if (err) {
+      let found = false
+      const errMsg = err.value.toString()
+
+      for (let msg of countMessages) {
+        if (errMsg.includes(msg)) {
+          errorCounts.add(1, { errorType: msg })
+          found = true
+          break
+        }
+      }
+
+      if (!found) {
+        errorCounts.add(1, { errorType: 'Unknown', message: errMsg })
+      }
+    }
+  }
 }
 EOF
 )
