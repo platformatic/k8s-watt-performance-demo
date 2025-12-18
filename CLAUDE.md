@@ -21,7 +21,7 @@ The repository follows a three-component architecture:
   - Supports multiple services with single node IP (different ports)
   - No LoadBalancer costs
   - Services annotated with `benchmark.platformatic.dev/expose: "true"` are discovered and benchmarked
-- **Separate Load Testing Instance**: Autocannon runs on a dedicated EC2 instance (not in the cluster) to simulate realistic network conditions and avoid resource contention
+- **Separate Load Testing Instance**: k6 runs on a dedicated EC2 instance (not in the cluster) to simulate realistic network conditions and avoid resource contention
 - **Automatic Cleanup**: All resources (cluster, node group, VPC, IAM roles, EC2 instance) are cleaned up via trap handlers on exit/failure
 
 ### Infrastructure Flow
@@ -76,7 +76,7 @@ Optional (with defaults):
 - `CLUSTER_NAME` - EKS cluster name (default: `watt-benchmark-<timestamp>`)
 - `NODE_TYPE` - EC2 instance type for EKS nodes (default: `m5.2xlarge`)
 - `NODE_COUNT` - Number of worker nodes (default: `3`)
-- `AMI_ID` - Amazon Linux 2023 AMI for autocannon EC2 (default: `ami-07b2b18045edffe90`)
+- `AMI_ID` - Amazon Linux 2023 AMI for load testing EC2 (default: `ami-07b2b18045edffe90`)
 - `LOADTESTING_INSTANCE_TYPE` - EC2 instance type for k6 (default: `c7gn.large`)
 
 ## Demo Application Structure
@@ -101,12 +101,25 @@ The demo (`demo/`) is a Next.js application with three deployment variants:
 - Builds Next.js app during image build
 - `entrypoint.sh` executes `npm run $SCRIPT_NAME` to start the appropriate server
 
+### Local Development
+
+```sh
+cd demo
+npm install
+npm run dev      # Development server with hot reload
+npm run build    # Build Next.js app
+```
+
 ### Load Testing
 
 The `demo/loadtest.sh` script runs k6 load tests sequentially against all three services:
 - 1000 requests/second for 120 seconds per service
 - 480 second cooldown between tests
 - Tests run on separate EC2 instance within same VPC
+
+## CI/CD
+
+GitHub Actions (`.github/workflows/main.yml`) automatically builds and pushes the Docker image to `platformatic/k8s-watt-performance-demo-next` on Docker Hub when changes are pushed to `demo/` on the `main` branch. Images are built for both `linux/amd64` and `linux/arm64` platforms.
 
 ## Common Functions (lib/common.sh)
 
