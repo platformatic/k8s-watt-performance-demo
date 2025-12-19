@@ -15,6 +15,8 @@ DEMO_SOURCE_DIR="$PROJECT_ROOT/demo"
 KUBE_MANIFEST="${DEMO_SOURCE_DIR}/kube.yaml"
 AMI_ID="${AMI_ID:-ami-07b2b18045edffe90}" # Amazon Linux 2023 arm64
 LOADTESTING_INSTANCE_TYPE="${LOADTESTING_INSTANCE_TYPE:-c7gn.large}"
+ECR_REPO_NAME="${ECR_REPO_NAME:-watt-benchmark}"
+IMAGE_TAG="${IMAGE_TAG:-latest}"
 
 # Infrastructure resource names (set by creation functions)
 CLUSTER_ROLE_NAME=""
@@ -28,6 +30,10 @@ NODE_ROLE_ARN=""
 KUBE_CONTEXT=""
 LOAD_TEST_INSTANCE_ID=""
 SECURITY_GROUP_ID=""
+AWS_ACCOUNT_ID=""
+AWS_REGION=""
+ECR_IMAGE_URI=""
+ECR_REPO_CREATED=""
 
 cleanup_instances() {
 	if [[ -n "$LOAD_TEST_INSTANCE_ID" ]]; then
@@ -149,6 +155,14 @@ cleanup_instances() {
 			--role-name "$CLUSTER_ROLE_NAME" \
 			--profile "$AWS_PROFILE" 2>/dev/null || true
 	fi
+
+	if [[ -n "$ECR_REPO_CREATED" && "$ECR_REPO_CREATED" == "true" ]]; then
+		log "Deleting ECR repository: $ECR_REPO_NAME"
+		aws ecr delete-repository \
+			--repository-name "$ECR_REPO_NAME" \
+			--force \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
+	fi
 }
 
 trap generic_cleanup EXIT INT TERM
@@ -187,6 +201,104 @@ validate_demo_manifests() {
 
 	success "Demo manifests validated"
 	return 0
+}
+
+validate_docker() {
+	log "Validating Docker..."
+
+	if ! command -v docker &>/dev/null; then
+		error "Docker is not installed. Please install Docker: https://docs.docker.com/get-docker/"
+		return 1
+	fi
+
+	if ! docker info >/dev/null 2>&1; then
+		error "Docker daemon is not running. Please start Docker."
+		return 1
+	fi
+
+	success "Docker validated"
+	return 0
+}
+
+setup_aws_info() {
+	log "Getting AWS account info..."
+
+	AWS_ACCOUNT_ID=$(aws sts get-caller-identity \
+		--profile "$AWS_PROFILE" \
+		--query 'Account' \
+		--output text)
+
+	AWS_REGION=$(aws configure get region --profile "$AWS_PROFILE")
+
+	if [[ -z "$AWS_ACCOUNT_ID" ]]; then
+		error "Could not get AWS account ID"
+		return 1
+	fi
+
+	if [[ -z "$AWS_REGION" ]]; then
+		error "Could not get AWS region. Please set a default region with: aws configure"
+		return 1
+	fi
+
+	ECR_IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:${IMAGE_TAG}"
+
+	log "AWS Account: $AWS_ACCOUNT_ID"
+	log "AWS Region: $AWS_REGION"
+	log "ECR Image: $ECR_IMAGE_URI"
+
+	success "AWS info retrieved"
+}
+
+ecr_login() {
+	log "Logging in to ECR..."
+
+	aws ecr get-login-password \
+		--profile "$AWS_PROFILE" \
+		--region "$AWS_REGION" | \
+	docker login \
+		--username AWS \
+		--password-stdin \
+		"${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >/dev/null 2>&1
+
+	success "ECR login successful"
+}
+
+create_ecr_repository() {
+	log "Creating ECR repository: $ECR_REPO_NAME"
+
+	if aws ecr describe-repositories \
+		--repository-names "$ECR_REPO_NAME" \
+		--profile "$AWS_PROFILE" >/dev/null 2>&1; then
+		log "Repository already exists"
+		return 0
+	fi
+
+	aws ecr create-repository \
+		--repository-name "$ECR_REPO_NAME" \
+		--profile "$AWS_PROFILE" \
+		--image-scanning-configuration scanOnPush=false \
+		>/dev/null
+
+	ECR_REPO_CREATED="true"
+	success "ECR repository created"
+}
+
+build_and_push_image() {
+	log "Building Docker image for linux/amd64..."
+	log "This may take a few minutes..."
+
+	docker build \
+		--platform linux/amd64 \
+		--build-arg COMMIT_HASH="$(git rev-parse HEAD 2>/dev/null || echo 'unknown')" \
+		--build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		-t "$ECR_IMAGE_URI" \
+		"$DEMO_SOURCE_DIR"
+
+	log "Pushing image to ECR..."
+
+	docker push "$ECR_IMAGE_URI"
+
+	success "Image pushed: $ECR_IMAGE_URI"
 }
 
 create_security_group_for_load_test() {
@@ -552,7 +664,9 @@ wait_for_nodes() {
 apply_demo_manifests() {
 	log "Applying demo manifests from $KUBE_MANIFEST..."
 
-	kubectl --context "$KUBE_CONTEXT" apply -f "$KUBE_MANIFEST"
+	# Template the manifest with ECR image URI
+	sed "s|IMAGE_PLACEHOLDER|${ECR_IMAGE_URI}|g" "$KUBE_MANIFEST" | \
+		kubectl --context "$KUBE_CONTEXT" apply -f -
 
 	success "Demo manifests applied"
 }
@@ -813,7 +927,7 @@ monitor_load_test() {
 }
 
 main() {
-	if ! validate_aws_tools || ! validate_common_tools || ! validate_eks_tools; then
+	if ! validate_aws_tools || ! validate_common_tools || ! validate_eks_tools || ! validate_docker; then
 		error "Tool validation failed"
 		exit 1
 	fi
@@ -825,6 +939,15 @@ main() {
 	if ! validate_demo_manifests; then
 		exit 1
 	fi
+
+	# Setup AWS info and ECR
+	if ! setup_aws_info; then
+		exit 1
+	fi
+
+	ecr_login
+	create_ecr_repository
+	build_and_push_image
 
 	# Create infrastructure
 	create_vpc_stack

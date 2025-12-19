@@ -17,32 +17,35 @@ The repository follows a three-component architecture:
 ### Key Design Decisions
 
 - **Pure AWS CLI**: Creates all infrastructure using AWS CLI (no eksctl, CloudFormation, or Terraform)
+- **Local Docker Build + ECR**: Images are built locally and pushed to an ephemeral ECR repository (no external CI/CD dependency)
 - **NodePort Services**: Demo services use NodePort (not LoadBalancer) accessed via node private IPs
   - Supports multiple services with single node IP (different ports)
   - No LoadBalancer costs
   - Services annotated with `benchmark.platformatic.dev/expose: "true"` are discovered and benchmarked
 - **Separate Load Testing Instance**: k6 runs on a dedicated EC2 instance (not in the cluster) to simulate realistic network conditions and avoid resource contention
-- **Automatic Cleanup**: All resources (cluster, node group, VPC, IAM roles, EC2 instance) are cleaned up via trap handlers on exit/failure
+- **Automatic Cleanup**: All resources (cluster, node group, VPC, IAM roles, EC2 instance, ECR repository) are cleaned up via trap handlers on exit/failure
 
 ### Infrastructure Flow
 
-1. Creates VPC with subnets, internet gateway, and route tables
-2. Creates IAM roles for cluster and nodes
-3. Creates EKS cluster and managed node group
-4. Configures kubectl context (cluster name)
-5. Deploys demo application from `kube.yaml`
-6. Waits for pods to be ready using kubectl
-7. Discovers annotated NodePort services
-8. Configures security groups for NodePort access
-9. Launches EC2 instance running k6 load tests
-10. Monitors console output and displays results
-11. Cleans up all resources
+1. Creates ECR repository and builds/pushes Docker image locally
+2. Creates VPC with subnets, internet gateway, and route tables
+3. Creates IAM roles for cluster and nodes
+4. Creates EKS cluster and managed node group
+5. Configures kubectl context (cluster name)
+6. Deploys demo application from `kube.yaml` (templated with ECR image URI)
+7. Waits for pods to be ready using kubectl
+8. Discovers annotated NodePort services
+9. Configures security groups for NodePort access
+10. Launches EC2 instance running k6 load tests
+11. Monitors console output and displays results
+12. Cleans up all resources (including ECR repository)
 
 ## Running Benchmarks
 
 ### Prerequisites
 
 Before running benchmarks, ensure:
+- Docker is installed and running
 - AWS CLI v2 is installed and configured with a default region
 - kubectl is installed
 - jq is installed
@@ -61,11 +64,12 @@ AWS_PROFILE=<profile-name> ./benchmark.sh
 ```
 
 The script will:
+- Build Docker image locally and push to ECR
 - Create an EKS cluster (takes 15-20 minutes)
 - Deploy the Next.js demo with three variants (Node, PM2, Watt)
 - Launch EC2 instance running k6 load tests
 - Display performance results
-- Clean up all resources automatically
+- Clean up all resources automatically (including ECR repository)
 
 ### Environment Variables
 
@@ -78,6 +82,8 @@ Optional (with defaults):
 - `NODE_COUNT` - Number of worker nodes (default: `3`)
 - `AMI_ID` - Amazon Linux 2023 AMI for load testing EC2 (default: `ami-07b2b18045edffe90`)
 - `LOADTESTING_INSTANCE_TYPE` - EC2 instance type for k6 (default: `c7gn.large`)
+- `ECR_REPO_NAME` - ECR repository name (default: `watt-benchmark`)
+- `IMAGE_TAG` - Docker image tag (default: `latest`)
 
 ## Demo Application Structure
 
@@ -95,6 +101,7 @@ The demo (`demo/`) is a Next.js application with three deployment variants:
 - Three Services with NodePort type and benchmark annotation
 - Services use fixed NodePorts: 30000 (Node), 30001 (PM2), 30002 (Watt)
 - Environment variables control which script runs (`SCRIPT_NAME`, `WORKERS`)
+- Image reference uses `IMAGE_PLACEHOLDER`, templated at deploy time with ECR URI
 
 **Docker image** (`Dockerfile`):
 - Based on Node 24 Alpine
@@ -116,10 +123,6 @@ The `demo/loadtest.sh` script runs k6 load tests sequentially against all three 
 - 1000 requests/second for 120 seconds per service
 - 480 second cooldown between tests
 - Tests run on separate EC2 instance within same VPC
-
-## CI/CD
-
-GitHub Actions (`.github/workflows/main.yml`) automatically builds and pushes the Docker image to `platformatic/k8s-watt-performance-demo-next` on Docker Hub when changes are pushed to `demo/` on the `main` branch. Images are built for both `linux/amd64` and `linux/arm64` platforms.
 
 ## Common Functions (lib/common.sh)
 

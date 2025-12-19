@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: demo-application
-          image: platformatic/k8s-watt-performance-demo-next:latest
+          image: IMAGE_PLACEHOLDER
           imagePullPolicy: Always
           env:
             - name: SCRIPT_NAME
@@ -79,7 +79,7 @@ spec:
     spec:
       containers:
         - name: demo-application
-          image: platformatic/k8s-watt-performance-demo-next:latest
+          image: IMAGE_PLACEHOLDER
           imagePullPolicy: Always
           env:
             - name: SCRIPT_NAME
@@ -143,7 +143,7 @@ spec:
     spec:
       containers:
         - name: demo-application
-          image: platformatic/k8s-watt-performance-demo-next:latest
+          image: IMAGE_PLACEHOLDER
           imagePullPolicy: Always
           env:
             - name: SCRIPT_NAME
