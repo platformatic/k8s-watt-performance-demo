@@ -6,6 +6,9 @@
     "build": "wattpm build",
     "dev": "wattpm dev",
     "start": "wattpm start",
+    "start:node": "react-router-serve $(ls ./build/server/assets/server-build-*.js)",
+    "start:watt": "wattpm start",
+    "start:pm2r": "pm2 start ecosystem.config.cjs && pm2 monitor",
     "typecheck": "react-router typegen && tsc"
   },
   "dependencies": {
@@ -13,6 +16,7 @@
     "@react-router/node": "7.10.1",
     "@react-router/serve": "7.10.1",
     "isbot": "^5.1.31",
+    "pm2": "^6.0.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-router": "7.10.1",
@@ -28,5 +32,8 @@
     "typescript": "^5.9.2",
     "vite": "^7.1.7",
     "vite-tsconfig-paths": "^5.1.4"
+  },
+  "engines": {
+    "node": ">=22.21.0"
   }
 }

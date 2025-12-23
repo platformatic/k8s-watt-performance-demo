@@ -1,22 +1,35 @@
-FROM node:20-alpine AS development-dependencies-env
-COPY . /app
-WORKDIR /app
-RUN npm ci
+FROM node:24.11.0-alpine
 
-FROM node:20-alpine AS production-dependencies-env
-COPY ./package.json package-lock.json /app/
-WORKDIR /app
-RUN npm ci --omit=dev
+ARG COMMIT_HASH
+ARG BUILD_TIME
 
-FROM node:20-alpine AS build-env
-COPY . /app/
-COPY --from=development-dependencies-env /app/node_modules /app/node_modules
 WORKDIR /app
+
+COPY . ./
+
+RUN npm install npm -g
+
+RUN npm install && npm cache clean --force
+RUN chmod +x entrypoint.sh
+
+EXPOSE 3000
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+ENV PLT_SERVER_LOGGER_LEVEL=info
+ENV PLT_MANAGEMENT_API=false
+ENV PLT_SERVER_METRICS=false
+ENV PLT_SERVER_HEALTH=true
+ENV WORKERS=2
+ENV BACKLOG=511
+
 RUN npm run build
 
-FROM node:20-alpine
-COPY ./package.json package-lock.json /app/
-COPY --from=production-dependencies-env /app/node_modules /app/node_modules
-COPY --from=build-env /app/build /app/build
-WORKDIR /app
-CMD ["npm", "run", "start"]
+ENTRYPOINT ["./entrypoint.sh"]
+
+LABEL org.opencontainers.image.authors="Platformatic"
+LABEL org.opencontainers.image.created="$BUILD_TIME"
+LABEL org.opencontainers.image.revision="$COMMIT_HASH"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.source="https://github.com/platformatic/watt-performance-demos"
+LABEL org.opencontainers.image.title="demos/react-router"
+LABEL org.opencontainers.image.description="React Router starter that can be run with Node or wattpm"

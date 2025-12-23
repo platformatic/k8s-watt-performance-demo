@@ -4,21 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This is a Kubernetes-based benchmarking framework for running Platformatic Watt performance tests on Amazon EKS (Elastic Kubernetes Service). The benchmark compares Next.js application performance when running with Node.js, PM2, and Platformatic Watt.
+This is a Kubernetes-based benchmarking framework for running Platformatic Watt performance tests on Amazon EKS (Elastic Kubernetes Service). The benchmark compares application performance when running with Node.js, PM2, and Platformatic Watt across different frameworks (Next.js, React Router).
 
 ## Architecture
 
-The repository follows a three-component architecture:
+The repository follows a multi-framework architecture:
 
 1. **Common Functions Library** (`lib/common.sh`) - Shared bash functions for logging, tool validation, HTTP health checks, and cleanup
-2. **Demo Application** (`demo/`) - Next.js application that can be run with different process managers (Node, PM2, Watt)
+2. **Framework Applications** - Each framework has its own directory:
+   - `next/` - Next.js application
+   - `react-router/` - React Router application
 3. **EKS Orchestration** (`benchmark.sh`) - Main benchmarking script that creates AWS infrastructure, deploys to EKS, runs load tests, and cleans up
 
 ### Key Design Decisions
 
 - **Pure AWS CLI**: Creates all infrastructure using AWS CLI (no eksctl, CloudFormation, or Terraform)
 - **Local Docker Build + ECR**: Images are built locally and pushed to an ephemeral ECR repository (no external CI/CD dependency)
-- **NodePort Services**: Demo services use NodePort (not LoadBalancer) accessed via node private IPs
+- **Multi-Framework Support**: Use `FRAMEWORK` env var to select which framework to benchmark (default: `next`)
+- **NodePort Services**: Services use NodePort (not LoadBalancer) accessed via node private IPs
   - Supports multiple services with single node IP (different ports)
   - No LoadBalancer costs
   - Services annotated with `benchmark.platformatic.dev/expose: "true"` are discovered and benchmarked
@@ -32,7 +35,7 @@ The repository follows a three-component architecture:
 3. Creates IAM roles for cluster and nodes
 4. Creates EKS cluster and managed node group
 5. Configures kubectl context (cluster name)
-6. Deploys demo application from `kube.yaml` (templated with ECR image URI)
+6. Deploys framework application from `kube.yaml` (templated with ECR image URI)
 7. Waits for pods to be ready using kubectl
 8. Discovers annotated NodePort services
 9. Configures security groups for NodePort access
@@ -60,13 +63,17 @@ AWS_PROFILE=<profile-name> ./setup-policy.sh
 
 Run the main benchmark script:
 ```sh
+# Benchmark Next.js (default)
 AWS_PROFILE=<profile-name> ./benchmark.sh
+
+# Benchmark React Router
+AWS_PROFILE=<profile-name> FRAMEWORK=react-router ./benchmark.sh
 ```
 
 The script will:
 - Build Docker image locally and push to ECR
 - Create an EKS cluster (takes 15-20 minutes)
-- Deploy the Next.js demo with three variants (Node, PM2, Watt)
+- Deploy the selected framework with three variants (Node, PM2, Watt)
 - Launch EC2 instance running k6 load tests
 - Display performance results
 - Clean up all resources automatically (including ECR repository)
@@ -77,6 +84,7 @@ Required:
 - `AWS_PROFILE` - AWS CLI profile to use
 
 Optional (with defaults):
+- `FRAMEWORK` - Framework to benchmark (default: `next`, options: `next`, `react-router`)
 - `CLUSTER_NAME` - EKS cluster name (default: `watt-benchmark-<timestamp>`)
 - `NODE_TYPE` - EC2 instance type for EKS nodes (default: `m5.2xlarge`)
 - `NODE_COUNT` - Number of worker nodes (default: `3`)
@@ -85,41 +93,48 @@ Optional (with defaults):
 - `ECR_REPO_NAME` - ECR repository name (default: `watt-benchmark`)
 - `IMAGE_TAG` - Docker image tag (default: `latest`)
 
-## Demo Application Structure
+## Framework Application Structure
 
-The demo (`demo/`) is a Next.js application with three deployment variants:
+Each framework directory (`next/`, `react-router/`) contains:
+
+### Common Files
+- `Dockerfile` - Docker image build configuration
+- `entrypoint.sh` - Docker entrypoint that runs `npm run $SCRIPT_NAME`
+- `kube.yaml` - Kubernetes manifests for three deployment variants
+- `loadtest.sh` - k6 load testing script
+- `ecosystem.config.js` - PM2 configuration
+- `watt.json` - Platformatic Watt configuration
+- `package.json` - NPM scripts and dependencies
 
 ### Package Scripts
-- `start:node` - Run with standalone Node.js
+- `start:node` - Run with standalone Node.js server
 - `start:pm2r` - Run with PM2 (2 workers by default)
 - `start:watt` - Run with Platformatic Watt (2 workers by default)
 
-### Configuration
-
-**Kubernetes deployment** (`kube.yaml`):
-- Three Deployments: `next` (Node), `next-pm2`, `next-watt`
+### Kubernetes Deployment (`kube.yaml`)
+- Three Deployments: `<framework>` (Node), `<framework>-pm2`, `<framework>-watt`
 - Three Services with NodePort type and benchmark annotation
 - Services use fixed NodePorts: 30000 (Node), 30001 (PM2), 30002 (Watt)
 - Environment variables control which script runs (`SCRIPT_NAME`, `WORKERS`)
 - Image reference uses `IMAGE_PLACEHOLDER`, templated at deploy time with ECR URI
 
-**Docker image** (`Dockerfile`):
+### Docker Image (`Dockerfile`)
 - Based on Node 24 Alpine
-- Builds Next.js app during image build
+- Builds app during image build
 - `entrypoint.sh` executes `npm run $SCRIPT_NAME` to start the appropriate server
 
 ### Local Development
 
 ```sh
-cd demo
+cd next  # or react-router
 npm install
 npm run dev      # Development server with hot reload
-npm run build    # Build Next.js app
+npm run build    # Build app
 ```
 
 ### Load Testing
 
-The `demo/loadtest.sh` script runs k6 load tests sequentially against all three services:
+The `loadtest.sh` script runs k6 load tests sequentially against all three services:
 - 1000 requests/second for 120 seconds per service
 - 480 second cooldown between tests
 - Tests run on separate EC2 instance within same VPC

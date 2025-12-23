@@ -14,8 +14,9 @@ CLUSTER_NAME="${CLUSTER_NAME:-watt-benchmark-$(date +%s)}"
 AWS_PROFILE="${AWS_PROFILE}"
 NODE_TYPE="${NODE_TYPE:-m5.2xlarge}"
 NODE_COUNT="${NODE_COUNT:-3}"
-DEMO_SOURCE_DIR="$PROJECT_ROOT/demo"
-KUBE_MANIFEST="${DEMO_SOURCE_DIR}/kube.yaml"
+FRAMEWORK="${FRAMEWORK:-next}"
+FRAMEWORK_SOURCE_DIR="$PROJECT_ROOT/$FRAMEWORK"
+KUBE_MANIFEST="${FRAMEWORK_SOURCE_DIR}/kube.yaml"
 AMI_ID="${AMI_ID:-ami-07b2b18045edffe90}" # Amazon Linux 2023 arm64
 LOADTESTING_INSTANCE_TYPE="${LOADTESTING_INSTANCE_TYPE:-c7gn.large}"
 ECR_REPO_NAME="${ECR_REPO_NAME:-watt-benchmark}"
@@ -193,16 +194,22 @@ validate_eks_tools() {
 	return 0
 }
 
-validate_demo_manifests() {
-	log "Validating demo manifests..."
+validate_framework_manifests() {
+	log "Validating framework manifests for: $FRAMEWORK"
 
-	if [[ ! -f "$KUBE_MANIFEST" ]]; then
-		error "Kubernetes manifest not found: $KUBE_MANIFEST"
-		error "Expected kube.yaml in demo directory"
+	if [[ ! -d "$FRAMEWORK_SOURCE_DIR" ]]; then
+		error "Framework directory not found: $FRAMEWORK_SOURCE_DIR"
+		error "Available frameworks: next, react-router"
 		return 1
 	fi
 
-	success "Demo manifests validated"
+	if [[ ! -f "$KUBE_MANIFEST" ]]; then
+		error "Kubernetes manifest not found: $KUBE_MANIFEST"
+		error "Expected kube.yaml in $FRAMEWORK directory"
+		return 1
+	fi
+
+	success "Framework manifests validated for: $FRAMEWORK"
 	return 0
 }
 
@@ -288,6 +295,7 @@ create_ecr_repository() {
 
 build_and_push_image() {
 	log "Building Docker image for linux/amd64..."
+	log "Building framework: $FRAMEWORK"
 	log "This may take a few minutes..."
 
 	docker build \
@@ -295,7 +303,7 @@ build_and_push_image() {
 		--build-arg COMMIT_HASH="$(git rev-parse HEAD 2>/dev/null || echo 'unknown')" \
 		--build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		-t "$ECR_IMAGE_URI" \
-		"$DEMO_SOURCE_DIR"
+		"$FRAMEWORK_SOURCE_DIR"
 
 	log "Pushing image to ECR..."
 
@@ -664,14 +672,14 @@ wait_for_nodes() {
 	return 1
 }
 
-apply_demo_manifests() {
-	log "Applying demo manifests from $KUBE_MANIFEST..."
+apply_framework_manifests() {
+	log "Applying $FRAMEWORK manifests from $KUBE_MANIFEST..."
 
 	# Template the manifest with ECR image URI
 	sed "s|IMAGE_PLACEHOLDER|${ECR_IMAGE_URI}|g" "$KUBE_MANIFEST" | \
 		kubectl --context "$KUBE_CONTEXT" apply -f -
 
-	success "Demo manifests applied"
+	success "$FRAMEWORK manifests applied"
 }
 
 wait_for_pods() {
@@ -801,7 +809,7 @@ launch_load_test_instance() {
 	log "Using subnet: $subnet_id"
 
 	local load_test_script
-	load_test_script=$(cat "$DEMO_SOURCE_DIR/loadtest.sh")
+	load_test_script=$(cat "$FRAMEWORK_SOURCE_DIR/loadtest.sh")
 	# log "Loadtest script: $load_test_script"
 
 	# Create user data script for load_test instance
@@ -930,6 +938,8 @@ monitor_load_test() {
 }
 
 main() {
+	log "Benchmark framework: $FRAMEWORK"
+
 	if ! validate_aws_tools || ! validate_common_tools || ! validate_eks_tools || ! validate_docker; then
 		error "Tool validation failed"
 		exit 1
@@ -939,7 +949,7 @@ main() {
 		exit 1
 	fi
 
-	if ! validate_demo_manifests; then
+	if ! validate_framework_manifests; then
 		exit 1
 	fi
 
@@ -968,7 +978,7 @@ main() {
 	create_nodegroup
 	wait_for_nodes
 
-	apply_demo_manifests
+	apply_framework_manifests
 	wait_for_pods
 
 	local services=$(find_annotated_nodeport_services)
