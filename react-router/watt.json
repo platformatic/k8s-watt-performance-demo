@@ -2,7 +2,7 @@
   "$schema": "https://schemas.platformatic.dev/@platformatic/react-router/3.28.2.json",
   "runtime": {
     "logger": {
-      "level": "{PLT_SERVER_LOGGER_LEVEL}"
+      "level": "{LOG_LEVEL}"
     },
     "verticalScaler": {
       "enabled": false
@@ -17,10 +17,10 @@
     },
     "health": {
       "enabled": "{PLT_SERVER_HEALTH}",
-      "maxHeapTotal": "2GB",
+      "maxHeapTotal": "4GB",
       "maxYoungGeneration": "256MB"
     },
-    "managementApi": false,
+    "managementApi": true,
     "workers": {
       "static": "{WORKERS}"
     }

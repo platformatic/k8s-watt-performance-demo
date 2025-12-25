@@ -15,6 +15,13 @@ spec:
       labels:
         app.kubernetes.io/instance: next
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: next
       containers:
         - name: demo-application
           image: IMAGE_PLACEHOLDER
@@ -77,6 +84,13 @@ spec:
       labels:
         app.kubernetes.io/instance: next-pm2
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: next-pm2
       containers:
         - name: demo-application
           image: IMAGE_PLACEHOLDER
@@ -141,6 +155,13 @@ spec:
       labels:
         app.kubernetes.io/instance: next-watt
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: next-watt
       containers:
         - name: demo-application
           image: IMAGE_PLACEHOLDER
@@ -206,8 +227,10 @@ metadata:
     app.kubernetes.io/instance: next-watt
   annotations:
     benchmark.platformatic.dev/expose: "true"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
 spec:
-  type: NodePort
+  type: LoadBalancer
   selector:
     app.kubernetes.io/instance: next-watt
   ports:
@@ -215,12 +238,10 @@ spec:
       protocol: 'TCP'
       port: 80
       targetPort: 'app'
-      nodePort: 30002
     - name: 'metrics'
       protocol: 'TCP'
       port: 9090
       targetPort: 'metrics'
-      nodePort: 30090
 
 ---
 apiVersion: v1
@@ -231,8 +252,10 @@ metadata:
     app.kubernetes.io/instance: next-pm2
   annotations:
     benchmark.platformatic.dev/expose: "true"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
 spec:
-  type: NodePort
+  type: LoadBalancer
   selector:
     app.kubernetes.io/instance: next-pm2
   ports:
@@ -240,7 +263,6 @@ spec:
       protocol: 'TCP'
       port: 80
       targetPort: 'app'
-      nodePort: 30001
 
 ---
 apiVersion: v1
@@ -251,8 +273,10 @@ metadata:
     app.kubernetes.io/instance: next
   annotations:
     benchmark.platformatic.dev/expose: "true"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
 spec:
-  type: NodePort
+  type: LoadBalancer
   selector:
     app.kubernetes.io/instance: next
   ports:
@@ -260,4 +284,3 @@ spec:
       protocol: 'TCP'
       port: 80
       targetPort: 'app'
-      nodePort: 30000

@@ -18,7 +18,7 @@ FRAMEWORK="${FRAMEWORK:-next}"
 FRAMEWORK_SOURCE_DIR="$PROJECT_ROOT/$FRAMEWORK"
 KUBE_MANIFEST="${FRAMEWORK_SOURCE_DIR}/kube.yaml"
 AMI_ID="${AMI_ID:-ami-07b2b18045edffe90}" # Amazon Linux 2023 arm64
-LOADTESTING_INSTANCE_TYPE="${LOADTESTING_INSTANCE_TYPE:-c7gn.large}"
+LOADTESTING_INSTANCE_TYPE="${LOADTESTING_INSTANCE_TYPE:-c7gn.2xlarge}"
 ECR_REPO_NAME="${ECR_REPO_NAME:-watt-benchmark}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 
@@ -40,13 +40,20 @@ ECR_IMAGE_URI=""
 ECR_REPO_CREATED=""
 
 cleanup_instances() {
+	# Terminate load test EC2 instance and wait for it
 	if [[ -n "$LOAD_TEST_INSTANCE_ID" ]]; then
 		log "Terminating load_test instance: $LOAD_TEST_INSTANCE_ID"
 		aws ec2 terminate-instances \
 			--instance-ids "$LOAD_TEST_INSTANCE_ID" \
 			--profile "$AWS_PROFILE" >/dev/null 2>&1 || true
+
+		log "Waiting for instance termination..."
+		aws ec2 wait instance-terminated \
+			--instance-ids "$LOAD_TEST_INSTANCE_ID" \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
 	fi
 
+	# Delete EKS node group
 	if [[ -n "$CLUSTER_NAME" ]]; then
 		local nodegroup_name="$CLUSTER_NAME-nodegroup"
 		log "Checking for node group: $nodegroup_name"
@@ -70,6 +77,7 @@ cleanup_instances() {
 		fi
 	fi
 
+	# Delete EKS cluster
 	if [[ -n "$CLUSTER_NAME" ]]; then
 		log "Checking if cluster exists: $CLUSTER_NAME"
 
@@ -89,17 +97,74 @@ cleanup_instances() {
 		fi
 	fi
 
+	# Delete Load Balancers in VPC (created by K8s LoadBalancer services)
+	if [[ -n "$VPC_ID" ]]; then
+		log "Deleting Load Balancers in VPC..."
+		local lb_arns
+		lb_arns=$(aws elbv2 describe-load-balancers \
+			--profile "$AWS_PROFILE" \
+			--output json 2>/dev/null | \
+			jq -r ".LoadBalancers[] | select(.VpcId == \"$VPC_ID\") | .LoadBalancerArn" 2>/dev/null || true)
+
+		if [[ -n "$lb_arns" ]]; then
+			for arn in $lb_arns; do
+				log "Deleting Load Balancer: $arn"
+				aws elbv2 delete-load-balancer \
+					--load-balancer-arn "$arn" \
+					--profile "$AWS_PROFILE" 2>/dev/null || true
+			done
+			log "Waiting for Load Balancer ENIs to be released (60s)..."
+			sleep 60
+		fi
+	fi
+
+	# Delete security group (with retry)
 	if [[ -n "$SECURITY_GROUP_ID" ]]; then
 		log "Deleting security group: $SECURITY_GROUP_ID"
-		sleep 5
-		aws ec2 delete-security-group \
-			--group-id "$SECURITY_GROUP_ID" \
-			--profile "$AWS_PROFILE" >/dev/null 2>&1 || true
+		local sg_retry=0
+		while [[ $sg_retry -lt 5 ]]; do
+			if aws ec2 delete-security-group \
+				--group-id "$SECURITY_GROUP_ID" \
+				--profile "$AWS_PROFILE" 2>/dev/null; then
+				break
+			fi
+			sg_retry=$((sg_retry + 1))
+			sleep 10
+		done
 	fi
 
 	if [[ -n "$VPC_ID" ]]; then
 		log "Deleting VPC resources..."
 
+		# Delete all non-default security groups in VPC
+		log "Deleting security groups..."
+		local sgs
+		sgs=$(aws ec2 describe-security-groups \
+			--filters "Name=vpc-id,Values=$VPC_ID" \
+			--profile "$AWS_PROFILE" \
+			--output json 2>/dev/null | \
+			jq -r '.SecurityGroups[] | select(.GroupName != "default") | .GroupId' 2>/dev/null || true)
+		for sg in $sgs; do
+			aws ec2 delete-security-group \
+				--group-id "$sg" \
+				--profile "$AWS_PROFILE" 2>/dev/null || true
+		done
+
+		# Delete Network Interfaces (orphaned ENIs from LBs/EKS)
+		log "Deleting network interfaces..."
+		local enis
+		enis=$(aws ec2 describe-network-interfaces \
+			--filters "Name=vpc-id,Values=$VPC_ID" \
+			--query 'NetworkInterfaces[*].NetworkInterfaceId' \
+			--output text \
+			--profile "$AWS_PROFILE" 2>/dev/null || true)
+		for eni in $enis; do
+			aws ec2 delete-network-interface \
+				--network-interface-id "$eni" \
+				--profile "$AWS_PROFILE" 2>/dev/null || true
+		done
+
+		# Detach and delete internet gateway
 		if [[ -n "$IGW_ID" ]]; then
 			aws ec2 detach-internet-gateway \
 				--internet-gateway-id "$IGW_ID" \
@@ -110,26 +175,68 @@ cleanup_instances() {
 				--profile "$AWS_PROFILE" 2>/dev/null || true
 		fi
 
-		if [[ -n "$SUBNET_IDS" ]]; then
-			IFS=',' read -ra SUBNETS <<< "$SUBNET_IDS"
-			for subnet in "${SUBNETS[@]}"; do
-				aws ec2 delete-subnet \
-					--subnet-id "$subnet" \
-					--profile "$AWS_PROFILE" 2>/dev/null || true
-			done
-		fi
-
-		if [[ -n "$RTB_ID" ]]; then
-			aws ec2 delete-route-table \
-				--route-table-id "$RTB_ID" \
+		# Also check for any IGWs attached to VPC (in case IGW_ID wasn't set)
+		local igws
+		igws=$(aws ec2 describe-internet-gateways \
+			--filters "Name=attachment.vpc-id,Values=$VPC_ID" \
+			--query 'InternetGateways[*].InternetGatewayId' \
+			--output text \
+			--profile "$AWS_PROFILE" 2>/dev/null || true)
+		for igw in $igws; do
+			aws ec2 detach-internet-gateway \
+				--internet-gateway-id "$igw" \
+				--vpc-id "$VPC_ID" \
 				--profile "$AWS_PROFILE" 2>/dev/null || true
-		fi
+			aws ec2 delete-internet-gateway \
+				--internet-gateway-id "$igw" \
+				--profile "$AWS_PROFILE" 2>/dev/null || true
+		done
 
-		aws ec2 delete-vpc \
-			--vpc-id "$VPC_ID" \
-			--profile "$AWS_PROFILE" 2>/dev/null || true
+		# Delete subnets
+		log "Deleting subnets..."
+		local subnets
+		subnets=$(aws ec2 describe-subnets \
+			--filters "Name=vpc-id,Values=$VPC_ID" \
+			--query 'Subnets[*].SubnetId' \
+			--output text \
+			--profile "$AWS_PROFILE" 2>/dev/null || true)
+		for subnet in $subnets; do
+			aws ec2 delete-subnet \
+				--subnet-id "$subnet" \
+				--profile "$AWS_PROFILE" 2>/dev/null || true
+		done
+
+		# Delete all non-main route tables
+		log "Deleting route tables..."
+		local rts
+		rts=$(aws ec2 describe-route-tables \
+			--filters "Name=vpc-id,Values=$VPC_ID" \
+			--profile "$AWS_PROFILE" \
+			--output json 2>/dev/null | \
+			jq -r '.RouteTables[] | select(.Associations[0].Main != true) | .RouteTableId' 2>/dev/null || true)
+		for rt in $rts; do
+			aws ec2 delete-route-table \
+				--route-table-id "$rt" \
+				--profile "$AWS_PROFILE" 2>/dev/null || true
+		done
+
+		# Delete VPC with retry
+		log "Deleting VPC: $VPC_ID"
+		local vpc_retry=0
+		while [[ $vpc_retry -lt 3 ]]; do
+			if aws ec2 delete-vpc \
+				--vpc-id "$VPC_ID" \
+				--profile "$AWS_PROFILE" 2>/dev/null; then
+				log "VPC deleted successfully"
+				break
+			fi
+			vpc_retry=$((vpc_retry + 1))
+			log "VPC deletion failed, retrying in 10s... (attempt $vpc_retry/3)"
+			sleep 10
+		done
 	fi
 
+	# Delete IAM roles
 	if [[ -n "$NODE_ROLE_NAME" ]]; then
 		log "Deleting node IAM role: $NODE_ROLE_NAME"
 		aws iam detach-role-policy \
@@ -160,6 +267,7 @@ cleanup_instances() {
 			--profile "$AWS_PROFILE" 2>/dev/null || true
 	fi
 
+	# Delete ECR repository
 	if [[ -n "$ECR_REPO_CREATED" && "$ECR_REPO_CREATED" == "true" ]]; then
 		log "Deleting ECR repository: $ECR_REPO_NAME"
 		aws ecr delete-repository \
@@ -726,18 +834,17 @@ wait_for_pods() {
 	return 1
 }
 
-find_annotated_nodeport_services() {
-	log "Finding annotated NodePort services..."
+find_annotated_loadbalancer_services() {
+	log "Finding annotated LoadBalancer services..."
 
 	# Find all services with the benchmark annotation
 	local services=$(kubectl --context "$KUBE_CONTEXT" get services -o json | jq -r '.items[] |
 		select(.metadata.annotations["benchmark.platformatic.dev/expose"] == "true") |
-		select(.spec.type == "NodePort") |
-		{name: .metadata.name, port: .spec.ports[0].nodePort} |
-		"\(.name):\(.port)"')
+		select(.spec.type == "LoadBalancer") |
+		.metadata.name')
 
 	if [[ -z "$services" ]]; then
-		error "No NodePort services found with annotation benchmark.platformatic.dev/expose=true"
+		error "No LoadBalancer services found with annotation benchmark.platformatic.dev/expose=true"
 		log "Available services:"
 		kubectl --context "$KUBE_CONTEXT" get services
 		return 1
@@ -749,6 +856,47 @@ find_annotated_nodeport_services() {
 	done
 
 	echo "$services"
+}
+
+wait_for_loadbalancer_hostnames() {
+	local services=$1
+	local max_attempts=60
+	local retry_delay=10
+
+	log "Waiting for LoadBalancer hostnames to be assigned..."
+
+	for svc in $services; do
+		log "Waiting for LoadBalancer hostname for service: $svc"
+		local attempt=0
+		local hostname=""
+
+		while [[ $attempt -lt $max_attempts ]]; do
+			hostname=$(kubectl --context "$KUBE_CONTEXT" get service "$svc" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+			if [[ -n "$hostname" && "$hostname" != "null" ]]; then
+				success "Service $svc has LoadBalancer hostname: $hostname"
+				break
+			fi
+
+			attempt=$((attempt + 1))
+			log "Attempt $attempt/$max_attempts: LoadBalancer not ready yet for $svc..."
+			sleep "$retry_delay"
+		done
+
+		if [[ -z "$hostname" || "$hostname" == "null" ]]; then
+			error "LoadBalancer hostname not assigned for $svc after $((max_attempts * retry_delay)) seconds"
+			kubectl --context "$KUBE_CONTEXT" get service "$svc" -o yaml
+			return 1
+		fi
+	done
+
+	success "All LoadBalancer hostnames assigned"
+}
+
+get_loadbalancer_url() {
+	local service_name=$1
+	local hostname=$(kubectl --context "$KUBE_CONTEXT" get service "$service_name" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+	echo "http://$hostname"
 }
 
 get_node_private_ip() {
@@ -782,19 +930,20 @@ get_instance_ip() {
 }
 
 launch_load_test_instance() {
-	local node_ip=$1
-	local service_ports=$2
+	local url_node=$1
+	local url_pm2=$2
+	local url_watt=$3
 
 	log "Launching load_test EC2 instance..."
 
-	# Get a private subnet from the EKS cluster VPC (load_test needs to reach private node IPs)
+	# Get a private subnet from the EKS cluster VPC (load_test needs to reach LoadBalancer endpoints)
 	local vpc_id=$(aws eks describe-cluster \
 		--name "$CLUSTER_NAME" \
 		--profile "$AWS_PROFILE" \
 		--query 'cluster.resourcesVpcConfig.vpcId' \
 		--output text)
 
-	# Use private subnet since nodes are on private IPs
+	# Use private subnet since LoadBalancers are internal
 	local subnet_id=$(aws ec2 describe-subnets \
 		--filters "Name=vpc-id,Values=$vpc_id" \
 		--profile "$AWS_PROFILE" \
@@ -856,8 +1005,10 @@ ulimit -n 1000000
 sysctl fs.file-max=2097152  # System-wide
 sysctl fs.nr_open=2097152
 
-echo 'Starting benchmark against node $node_ip'
-export TARGET_URL=$node_ip
+echo 'Starting benchmark via LoadBalancers'
+export URL_NODE="$url_node"
+export URL_PM2="$url_pm2"
+export URL_WATT="$url_watt"
 
 $load_test_script
 
@@ -981,30 +1132,28 @@ main() {
 	apply_framework_manifests
 	wait_for_pods
 
-	local services=$(find_annotated_nodeport_services)
+	local services=$(find_annotated_loadbalancer_services)
 
 	if [[ -z "$services" ]]; then
-		error "Could not find annotated NodePort services"
+		error "Could not find annotated LoadBalancer services"
 		exit 1
 	fi
 
-	local node_ip=$(get_node_private_ip)
+	wait_for_loadbalancer_hostnames "$services"
 
-	if [[ -z "$node_ip" ]]; then
-		error "Could not get node IP"
-		exit 1
-	fi
+	# Get LoadBalancer URLs for each service variant
+	local url_node=$(get_loadbalancer_url "$FRAMEWORK")
+	local url_pm2=$(get_loadbalancer_url "${FRAMEWORK}-pm2")
+	local url_watt=$(get_loadbalancer_url "${FRAMEWORK}-watt")
 
-	local node_ports=$(get_node_ports_list "$services")
-
-	log "Services will be accessible at: $node_ip"
-	log "NodePorts: $node_ports"
+	log "LoadBalancer URLs:"
+	log "  Node:  $url_node"
+	log "  PM2:   $url_pm2"
+	log "  Watt:  $url_watt"
 
 	create_security_group_for_load_test
 
-	configure_node_security_for_nodeports "$node_ports"
-
-	launch_load_test_instance "$node_ip" "$node_ports"
+	launch_load_test_instance "$url_node" "$url_pm2" "$url_watt"
 
 	log "Waiting for load_test instance to be running..."
 	aws ec2 wait instance-running \

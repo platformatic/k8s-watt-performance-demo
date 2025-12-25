@@ -6,9 +6,9 @@
 
 set -e
 
-# Ensure TARGET_URL is set
-if [ -z "$TARGET_URL" ]; then
-  echo "Error: TARGET_URL environment variable must be set"
+# Ensure LoadBalancer URLs are set
+if [ -z "$URL_NODE" ] || [ -z "$URL_PM2" ] || [ -z "$URL_WATT" ]; then
+  echo "Error: URL_NODE, URL_PM2, and URL_WATT environment variables must be set"
   exit 1
 fi
 
@@ -26,11 +26,12 @@ export const options = {
 
       duration: '120s',
 
-      rate: 1000,
+      rate: 10000,
 
       timeUnit: '1s',
 
       preAllocatedVUs: 1000,
+      maxVUs: 20000,
     },
   },
   // noConnectionReuse: true, // Disable HTTP keep-alive, create new connection for each request
@@ -82,11 +83,11 @@ run_k6_test() {
   echo "$K6_SCRIPT" | k6 run --env TARGET="$url" --quiet -
 }
 
-# Run tests against each service
-run_k6_test "PM2" "http://$TARGET_URL:30001/"
+# Run tests against each service via LoadBalancer
+run_k6_test "PM2" "$URL_PM2/"
 sleep 480
 
-run_k6_test "Watt" "http://$TARGET_URL:30002/"
+run_k6_test "Watt" "$URL_WATT/"
 sleep 480
 
-run_k6_test "Single Node" "http://$TARGET_URL:30000/"
+run_k6_test "Single Node" "$URL_NODE/"
