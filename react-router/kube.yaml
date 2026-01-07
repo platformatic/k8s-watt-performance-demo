@@ -2,19 +2,26 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: next
+  name: react-router
   labels:
-    app.kubernetes.io/instance: next
+    app.kubernetes.io/instance: react-router
 spec:
   replicas: 6
   selector:
     matchLabels:
-      app.kubernetes.io/instance: next
+      app.kubernetes.io/instance: react-router
   template:
     metadata:
       labels:
-        app.kubernetes.io/instance: next
+        app.kubernetes.io/instance: react-router
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: react-router
       containers:
         - name: demo-application
           image: IMAGE_PLACEHOLDER
@@ -54,29 +61,36 @@ spec:
             failureThreshold: 15
           resources:
             requests:
-              memory: '2Gi'
+              memory: '3Gi'
               cpu: '1000m'
             limits:
-              memory: '2Gi'
+              memory: '3Gi'
               cpu: '1000m'
 
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: next-pm2
+  name: react-router-pm2
   labels:
-    app.kubernetes.io/instance: next-pm2
+    app.kubernetes.io/instance: react-router-pm2
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app.kubernetes.io/instance: next-pm2
+      app.kubernetes.io/instance: react-router-pm2
   template:
     metadata:
       labels:
-        app.kubernetes.io/instance: next-pm2
+        app.kubernetes.io/instance: react-router-pm2
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: react-router-pm2
       containers:
         - name: demo-application
           image: IMAGE_PLACEHOLDER
@@ -118,29 +132,36 @@ spec:
             failureThreshold: 15
           resources:
             requests:
-              memory: '4Gi'
+              memory: '6Gi'
               cpu: '2000m'
             limits:
-              memory: '4Gi'
+              memory: '6Gi'
               cpu: '2000m'
 
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: next-watt
+  name: react-router-watt
   labels:
-    app.kubernetes.io/instance: next-watt
+    app.kubernetes.io/instance: react-router-watt
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app.kubernetes.io/instance: next-watt
+      app.kubernetes.io/instance: react-router-watt
   template:
     metadata:
       labels:
-        app.kubernetes.io/instance: next-watt
+        app.kubernetes.io/instance: react-router-watt
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: react-router-watt
       containers:
         - name: demo-application
           image: IMAGE_PLACEHOLDER
@@ -191,73 +212,75 @@ spec:
             failureThreshold: 15
           resources:
             requests:
-              memory: '4Gi'
+              memory: '6Gi'
               cpu: '2000m'
             limits:
-              memory: '4Gi'
+              memory: '6Gi'
               cpu: '2000m'
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: next-watt
+  name: react-router-watt
   labels:
-    app.kubernetes.io/instance: next-watt
+    app.kubernetes.io/instance: react-router-watt
   annotations:
     benchmark.platformatic.dev/expose: "true"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
 spec:
-  type: NodePort
+  type: LoadBalancer
   selector:
-    app.kubernetes.io/instance: next-watt
+    app.kubernetes.io/instance: react-router-watt
   ports:
     - name: app
       protocol: 'TCP'
       port: 80
       targetPort: 'app'
-      nodePort: 30002
     - name: 'metrics'
       protocol: 'TCP'
       port: 9090
       targetPort: 'metrics'
-      nodePort: 30090
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: next-pm2
+  name: react-router-pm2
   labels:
-    app.kubernetes.io/instance: next-pm2
+    app.kubernetes.io/instance: react-router-pm2
   annotations:
     benchmark.platformatic.dev/expose: "true"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
 spec:
-  type: NodePort
+  type: LoadBalancer
   selector:
-    app.kubernetes.io/instance: next-pm2
+    app.kubernetes.io/instance: react-router-pm2
   ports:
     - name: app
       protocol: 'TCP'
       port: 80
       targetPort: 'app'
-      nodePort: 30001
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: next
+  name: react-router
   labels:
-    app.kubernetes.io/instance: next
+    app.kubernetes.io/instance: react-router
   annotations:
     benchmark.platformatic.dev/expose: "true"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
 spec:
-  type: NodePort
+  type: LoadBalancer
   selector:
-    app.kubernetes.io/instance: next
+    app.kubernetes.io/instance: react-router
   ports:
     - name: app
       protocol: 'TCP'
       port: 80
       targetPort: 'app'
-      nodePort: 30000
