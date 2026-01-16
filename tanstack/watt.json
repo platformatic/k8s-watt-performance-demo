@@ -21,7 +21,7 @@
     "health": {
       "enabled": "{PLT_SERVER_HEALTH}",
       "maxHeapTotal": "4GB",
-      "maxYoungGeneration": "256MB"
+      "maxYoungGeneration": "128MB"
     },
     "managementApi": true,
     "workers": {
