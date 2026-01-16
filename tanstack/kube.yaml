@@ -61,10 +61,10 @@ spec:
             failureThreshold: 15
           resources:
             requests:
-              memory: '2Gi'
+              memory: '3Gi'
               cpu: '1000m'
             limits:
-              memory: '2Gi'
+              memory: '3Gi'
               cpu: '1000m'
 
 ---
@@ -132,10 +132,10 @@ spec:
             failureThreshold: 15
           resources:
             requests:
-              memory: '4Gi'
+              memory: '6Gi'
               cpu: '2000m'
             limits:
-              memory: '4Gi'
+              memory: '6Gi'
               cpu: '2000m'
 
 ---
@@ -177,8 +177,6 @@ spec:
               value: "true"
             - name: BACKLOG
               value: "1024"
-            - name: UV_THREADPOOL_SIZE
-              value: "128"
           ports:
             - name: 'app'
               containerPort: 3000
@@ -214,10 +212,10 @@ spec:
             failureThreshold: 15
           resources:
             requests:
-              memory: '4Gi'
+              memory: '6Gi'
               cpu: '2000m'
             limits:
-              memory: '4Gi'
+              memory: '6Gi'
               cpu: '2000m'
 
 ---
