@@ -1,0 +1,43 @@
+{
+  "name": "tanstack-start",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "build:watt": "NODE_ENV=production wattpm build",
+    "start": "node .output/server/index.mjs",
+    "start:node": "NODE_ENV=production node .output/server/index.mjs",
+    "start:watt": "wattpm start",
+    "start:pm2r": "pm2 start ecosystem.config.cjs && pm2 monitor",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@platformatic/tanstack": "^3.29.1",
+    "@platformatic/wattpm-pprof-capture": "^3.29.1",
+    "@tanstack/react-router": "^1.150.0",
+    "@tanstack/react-router-devtools": "^1.150.0",
+    "@tanstack/react-start": "^1.150.0",
+    "pm2": "^6.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^2.6.0",
+    "wattpm": "^3.29.1",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/node": "^22.5.4",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "@vitejs/plugin-react": "^4.6.0",
+    "nitro": "npm:nitro-nightly@latest",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.7.2",
+    "vite": "^7.1.7",
+    "vite-tsconfig-paths": "^5.1.4"
+  },
+  "engines": {
+    "node": ">=22.21.0"
+  }
+}
