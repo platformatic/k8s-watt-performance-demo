@@ -1010,9 +1010,18 @@ export URL_NODE="$url_node"
 export URL_PM2="$url_pm2"
 export URL_WATT="$url_watt"
 
+# Create log file for benchmark results
+BENCHMARK_LOG="/var/log/benchmark-results.log"
+touch "\$BENCHMARK_LOG"
+chmod 644 "\$BENCHMARK_LOG"
+
+# Run load test and capture output to both console and log file
+{
 $load_test_script
+} 2>&1 | tee -a "\$BENCHMARK_LOG"
 
 echo 'Benchmark completed - instance will terminate'
+echo "Results saved to: \$BENCHMARK_LOG"
 EOF
 
 	local ac_user_data=$(base64_encode "$ac_user_script")
