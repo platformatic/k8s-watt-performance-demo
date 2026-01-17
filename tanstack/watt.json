@@ -23,7 +23,7 @@
       "interval": 5000,
       "maxUnhealthyChecks": 3,
       "maxHeapTotal": "4GB",
-      "maxYoungGeneration": "128MB"
+      "maxYoungGeneration": "256MB"
     },
     "managementApi": true,
     "gracefulShutdown": {
