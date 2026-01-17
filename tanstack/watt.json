@@ -20,10 +20,16 @@
     },
     "health": {
       "enabled": "{PLT_SERVER_HEALTH}",
+      "interval": 5000,
+      "maxUnhealthyChecks": 3,
       "maxHeapTotal": "4GB",
       "maxYoungGeneration": "128MB"
     },
     "managementApi": true,
+    "gracefulShutdown": {
+      "runtime": 1000,
+      "application": 1000
+    },
     "workers": {
       "static": "{WORKERS}"
     }

@@ -26,12 +26,12 @@ export const options = {
 
       duration: '120s',
 
-      rate: 10000,
+      rate: 5000,
 
       timeUnit: '1s',
 
-      preAllocatedVUs: 1000,
-      maxVUs: 20000,
+      preAllocatedVUs: 500,
+      maxVUs: 10000,
     },
   },
   // noConnectionReuse: true, // Disable HTTP keep-alive, create new connection for each request
