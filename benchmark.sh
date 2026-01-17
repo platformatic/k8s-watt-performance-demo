@@ -1089,6 +1089,15 @@ monitor_load_test() {
 
 		if echo "$current_output" | grep -q "Benchmark completed"; then
 			echo "$all_output" | parse_console_output
+
+			# Save results to local file
+			local results_dir="$PROJECT_ROOT/results"
+			mkdir -p "$results_dir"
+			local timestamp=$(date +%Y%m%d-%H%M%S)
+			local results_file="$results_dir/${FRAMEWORK}-${timestamp}.log"
+			echo "$all_output" | parse_console_output > "$results_file"
+			success "Benchmark results saved to: $results_file"
+
 			success "Benchmark execution completed!"
 			break
 		fi
