@@ -13,7 +13,7 @@ source "$PROJECT_ROOT/lib/common.sh"
 CLUSTER_NAME="${CLUSTER_NAME:-watt-benchmark-$(date +%s)}"
 AWS_PROFILE="${AWS_PROFILE}"
 NODE_TYPE="${NODE_TYPE:-m5.2xlarge}"
-NODE_COUNT="${NODE_COUNT:-3}"
+NODE_COUNT="${NODE_COUNT:-4}"
 FRAMEWORK="${FRAMEWORK:-next}"
 FRAMEWORK_SOURCE_DIR="$PROJECT_ROOT/$FRAMEWORK"
 KUBE_MANIFEST="${FRAMEWORK_SOURCE_DIR}/kube.yaml"
@@ -288,6 +288,18 @@ base64_encode() {
 	else
 		# Linux (GNU coreutils)
 		printf '%s' "$input" | base64 -w0
+	fi
+}
+
+# Gzip compress then base64 encode (for large user data)
+# AWS EC2 automatically decompresses gzip user data
+gzip_base64_encode() {
+	local input="$1"
+	if [[ "$OSTYPE" == "darwin"* ]]; then
+		printf '%s' "$input" | gzip -9 | base64 | tr -d '\n'
+	else
+		# Linux (GNU coreutils)
+		printf '%s' "$input" | gzip -9 | base64 -w 0
 	fi
 }
 
@@ -834,6 +846,219 @@ wait_for_pods() {
 	return 1
 }
 
+# ============================================================================
+# DIAGNOSTIC FUNCTIONS
+# ============================================================================
+
+show_cluster_info() {
+	log "============================================================"
+	log "CLUSTER INFORMATION"
+	log "============================================================"
+
+	log "Cluster: $CLUSTER_NAME"
+	log "Region: $AWS_REGION"
+	log "Node Type: $NODE_TYPE"
+	log "Node Count: $NODE_COUNT"
+
+	log ""
+	log "--- Kubernetes Version ---"
+	kubectl --context "$KUBE_CONTEXT" version --short 2>/dev/null || kubectl --context "$KUBE_CONTEXT" version
+
+	log ""
+	log "--- Node Information ---"
+	kubectl --context "$KUBE_CONTEXT" get nodes -o wide
+
+	log ""
+	log "--- Node Resources ---"
+	kubectl --context "$KUBE_CONTEXT" describe nodes | grep -A 10 "Allocated resources:" || true
+
+	log "============================================================"
+}
+
+show_deployment_details() {
+	log "============================================================"
+	log "DEPLOYMENT DETAILS"
+	log "============================================================"
+
+	log ""
+	log "--- Deployments ---"
+	kubectl --context "$KUBE_CONTEXT" get deployments -o wide
+
+	log ""
+	log "--- Pods (detailed) ---"
+	kubectl --context "$KUBE_CONTEXT" get pods -o wide
+
+	log ""
+	log "--- Pod Resource Requests/Limits ---"
+	kubectl --context "$KUBE_CONTEXT" get pods -o custom-columns=\
+'NAME:.metadata.name,'\
+'CPU_REQ:.spec.containers[0].resources.requests.cpu,'\
+'CPU_LIM:.spec.containers[0].resources.limits.cpu,'\
+'MEM_REQ:.spec.containers[0].resources.requests.memory,'\
+'MEM_LIM:.spec.containers[0].resources.limits.memory,'\
+'NODE:.spec.nodeName'
+
+	log ""
+	log "--- Services ---"
+	kubectl --context "$KUBE_CONTEXT" get services -o wide
+
+	log ""
+	log "--- Pod Distribution by Node ---"
+	kubectl --context "$KUBE_CONTEXT" get pods -o wide --no-headers | awk '{nodes[$7]++} END {for (n in nodes) print n ": " nodes[n] " pods"}'
+
+	log "============================================================"
+}
+
+show_pod_events() {
+	log "============================================================"
+	log "POD EVENTS (last 50)"
+	log "============================================================"
+	kubectl --context "$KUBE_CONTEXT" get events --sort-by='.lastTimestamp' | tail -50
+	log "============================================================"
+}
+
+health_check_endpoints() {
+	local url_node=$1
+	local url_pm2=$2
+	local url_watt=$3
+
+	log "============================================================"
+	log "ENDPOINT HEALTH CHECKS"
+	log "============================================================"
+
+	for endpoint in "Node:$url_node" "PM2:$url_pm2" "Watt:$url_watt"; do
+		local name="${endpoint%%:*}"
+		local url="${endpoint#*:}"
+
+		log ""
+		log "--- $name ($url) ---"
+
+		# Try multiple times with curl
+		local success_count=0
+		local total_time=0
+
+		for i in {1..5}; do
+			local result=$(curl -s -o /dev/null -w "%{http_code},%{time_total}" --connect-timeout 5 --max-time 10 "$url/" 2>/dev/null || echo "000,0")
+			local http_code="${result%%,*}"
+			local time_sec="${result##*,}"
+
+			if [[ "$http_code" == "200" ]]; then
+				success_count=$((success_count + 1))
+				total_time=$(echo "$total_time + $time_sec" | bc)
+				log "  Request $i: HTTP $http_code (${time_sec}s)"
+			else
+				log "  Request $i: HTTP $http_code (FAILED)"
+			fi
+			sleep 0.5
+		done
+
+		if [[ $success_count -gt 0 ]]; then
+			local avg_time=$(echo "scale=3; $total_time / $success_count" | bc)
+			success "$name: $success_count/5 successful, avg response time: ${avg_time}s"
+		else
+			error "$name: All health checks failed!"
+		fi
+	done
+
+	log "============================================================"
+}
+
+collect_pod_logs() {
+	local deployment=$1
+	local lines=${2:-100}
+
+	log "============================================================"
+	log "POD LOGS: $deployment (last $lines lines per pod)"
+	log "============================================================"
+
+	local pods=$(kubectl --context "$KUBE_CONTEXT" get pods -l "app.kubernetes.io/instance=$deployment" -o jsonpath='{.items[*].metadata.name}')
+
+	for pod in $pods; do
+		log ""
+		log "--- Pod: $pod ---"
+		kubectl --context "$KUBE_CONTEXT" logs "$pod" --tail="$lines" 2>/dev/null || log "(no logs available)"
+	done
+
+	log "============================================================"
+}
+
+collect_all_pod_logs() {
+	log ""
+	log "########################################################################"
+	log "COLLECTING POD LOGS FROM ALL DEPLOYMENTS"
+	log "########################################################################"
+
+	collect_pod_logs "$FRAMEWORK" 50
+	collect_pod_logs "${FRAMEWORK}-pm2" 50
+	collect_pod_logs "${FRAMEWORK}-watt" 50
+}
+
+show_resource_usage() {
+	log "============================================================"
+	log "RESOURCE USAGE (kubectl top)"
+	log "============================================================"
+
+	log ""
+	log "--- Node Resource Usage ---"
+	kubectl --context "$KUBE_CONTEXT" top nodes 2>/dev/null || log "(metrics-server not available)"
+
+	log ""
+	log "--- Pod Resource Usage ---"
+	kubectl --context "$KUBE_CONTEXT" top pods 2>/dev/null || log "(metrics-server not available)"
+
+	log "============================================================"
+}
+
+show_pod_descriptions() {
+	local deployment=$1
+
+	log "============================================================"
+	log "POD DESCRIPTIONS: $deployment"
+	log "============================================================"
+
+	local pods=$(kubectl --context "$KUBE_CONTEXT" get pods -l "app.kubernetes.io/instance=$deployment" -o jsonpath='{.items[*].metadata.name}')
+
+	for pod in $pods; do
+		log ""
+		log "--- Pod: $pod ---"
+		kubectl --context "$KUBE_CONTEXT" describe pod "$pod" | grep -A 20 "Conditions:" || true
+		kubectl --context "$KUBE_CONTEXT" describe pod "$pod" | grep -A 5 "Events:" || true
+	done
+
+	log "============================================================"
+}
+
+pre_benchmark_diagnostics() {
+	log ""
+	log "########################################################################"
+	log "PRE-BENCHMARK DIAGNOSTICS"
+	log "########################################################################"
+
+	show_cluster_info
+	show_deployment_details
+	show_resource_usage
+	show_pod_events
+}
+
+post_benchmark_diagnostics() {
+	log ""
+	log "########################################################################"
+	log "POST-BENCHMARK DIAGNOSTICS"
+	log "########################################################################"
+
+	show_resource_usage
+	show_pod_events
+	collect_all_pod_logs
+
+	log ""
+	log "--- Checking for OOMKilled or CrashLoopBackOff pods ---"
+	kubectl --context "$KUBE_CONTEXT" get pods -o wide | grep -E "OOMKilled|CrashLoopBackOff|Error" || log "No problematic pods found"
+
+	log ""
+	log "--- Pod restart counts ---"
+	kubectl --context "$KUBE_CONTEXT" get pods -o custom-columns='NAME:.metadata.name,RESTARTS:.status.containerStatuses[0].restartCount'
+}
+
 find_annotated_loadbalancer_services() {
 	log "Finding annotated LoadBalancer services..."
 
@@ -1024,7 +1249,7 @@ echo 'Benchmark completed - instance will terminate'
 echo "Results saved to: \$BENCHMARK_LOG"
 EOF
 
-	local ac_user_data=$(base64_encode "$ac_user_script")
+	local ac_user_data=$(gzip_base64_encode "$ac_user_script")
 
 	LOAD_TEST_INSTANCE_ID=$(aws ec2 run-instances \
 		--image-id "$AMI_ID" \
@@ -1070,23 +1295,76 @@ monitor_load_test() {
 	local previous_output=""
 	local current_output=""
 	local all_output=""
+	local max_wait_seconds=3600  # 1 hour max wait
+	local elapsed=0
+	local check_interval=10
+
+	# Create log file with timestamp
+	local log_timestamp=$(date +%Y%m%d_%H%M%S)
+	local log_file="${PROJECT_ROOT}/benchmark_${log_timestamp}.log"
 
 	log "Monitoring load_test instance console output..."
-	log "Waiting for benchmark to complete (this may take a few minutes)..."
+	log "Waiting for benchmark to complete (timeout: ${max_wait_seconds}s)..."
+	log "Saving logs to: $log_file"
 
-	while true; do
+	# Initialize log file with header
+	{
+		echo "========================================================================"
+		echo "BENCHMARK LOG"
+		echo "Started: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+		echo "Instance: $instance_id"
+		echo "Cluster: $CLUSTER_NAME"
+		echo "Framework: $FRAMEWORK"
+		echo "========================================================================"
+		echo ""
+	} > "$log_file"
+
+	while [[ $elapsed -lt $max_wait_seconds ]]; do
+		# Check instance state first
+		local instance_state=$(aws ec2 describe-instances \
+			--instance-ids "$instance_id" \
+			--query 'Reservations[0].Instances[0].State.Name' \
+			--output text \
+			--profile "$AWS_PROFILE" 2>/dev/null || echo "unknown")
+
+		if [[ "$instance_state" == "terminated" || "$instance_state" == "shutting-down" ]]; then
+			error "Load test instance terminated unexpectedly!"
+			log "Instance state: $instance_state"
+			echo "$all_output" >> "$log_file"
+			log ""
+			log "=== FULL CONSOLE OUTPUT ==="
+			echo "$all_output"
+			log "=== END CONSOLE OUTPUT ==="
+			log "Full log saved to: $log_file"
+			return 1
+		fi
+
 		current_output=$(aws ec2 get-console-output \
 			--instance-id "$instance_id" \
 			--query 'Output' \
 			--output text \
 			--latest \
-			--profile "$AWS_PROFILE")
+			--profile "$AWS_PROFILE" 2>/dev/null || echo "")
 
 		if [[ -n "$current_output" && "$current_output" != "$previous_output" ]]; then
 			previous_output="$current_output"
-			all_output+="$current_output"
+			all_output="$current_output"
+			# Save to log file (overwrite with latest full output)
+			{
+				echo "========================================================================"
+				echo "BENCHMARK LOG"
+				echo "Started: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+				echo "Instance: $instance_id"
+				echo "Cluster: $CLUSTER_NAME"
+				echo "Framework: $FRAMEWORK"
+				echo "Last updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+				echo "========================================================================"
+				echo ""
+				echo "$current_output"
+			} > "$log_file"
 		fi
 
+		# Check for successful completion
 		if echo "$current_output" | grep -q "Benchmark completed"; then
 			echo "$all_output" | parse_console_output
 
@@ -1097,17 +1375,54 @@ monitor_load_test() {
 			local results_file="$results_dir/${FRAMEWORK}-${timestamp}.log"
 			echo "$all_output" | parse_console_output > "$results_file"
 			success "Benchmark results saved to: $results_file"
+			log "Full log saved to: $log_file"
 
 			success "Benchmark execution completed!"
-			break
+			return 0
 		fi
 
-		sleep 10
+		# Check for common failure patterns
+		if echo "$current_output" | grep -qiE "fatal error|panic|segmentation fault|out of memory|killed|failed to start"; then
+			error "Load test script failed!"
+			log ""
+			log "=== FULL CONSOLE OUTPUT ==="
+			echo "$all_output"
+			log "=== END CONSOLE OUTPUT ==="
+			log "Full log saved to: $log_file"
+			return 1
+		fi
+
+		# Check for cloud-init failures
+		if echo "$current_output" | grep -qE "Cloud-init.*finished.*result: fail|CRITICAL.*cloud-init"; then
+			error "Cloud-init failed to run user-data script!"
+			log ""
+			log "=== FULL CONSOLE OUTPUT ==="
+			echo "$all_output"
+			log "=== END CONSOLE OUTPUT ==="
+			log "Full log saved to: $log_file"
+			return 1
+		fi
+
+		elapsed=$((elapsed + check_interval))
+		sleep $check_interval
 	done
+
+	# Timeout reached
+	error "Load test timed out after ${max_wait_seconds} seconds!"
+	log ""
+	log "=== FULL CONSOLE OUTPUT ==="
+	echo "$all_output"
+	log "=== END CONSOLE OUTPUT ==="
+	log "Full log saved to: $log_file"
+	return 1
 }
 
 main() {
-	log "Benchmark framework: $FRAMEWORK"
+	log "########################################################################"
+	log "WATT BENCHMARK: Node vs PM2 vs Watt"
+	log "Framework: $FRAMEWORK"
+	log "Started at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	log "########################################################################"
 
 	if ! validate_aws_tools || ! validate_common_tools || ! validate_eks_tools || ! validate_docker; then
 		error "Tool validation failed"
@@ -1169,7 +1484,19 @@ main() {
 	log "  PM2:   $url_pm2"
 	log "  Watt:  $url_watt"
 
+	# Run pre-benchmark diagnostics
+	pre_benchmark_diagnostics
+
+	# Health check all endpoints before load testing
+	health_check_endpoints "$url_node" "$url_pm2" "$url_watt"
+
 	create_security_group_for_load_test
+
+	log ""
+	log "########################################################################"
+	log "STARTING LOAD TEST"
+	log "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	log "########################################################################"
 
 	launch_load_test_instance "$url_node" "$url_pm2" "$url_watt"
 
@@ -1178,7 +1505,20 @@ main() {
 		--instance-ids "$LOAD_TEST_INSTANCE_ID" \
 		--profile "$AWS_PROFILE"
 
-	monitor_load_test "$LOAD_TEST_INSTANCE_ID"
+	if ! monitor_load_test "$LOAD_TEST_INSTANCE_ID"; then
+		error "Load test failed! Running post-benchmark diagnostics..."
+		post_benchmark_diagnostics
+		exit 1
+	fi
+
+	# Run post-benchmark diagnostics
+	post_benchmark_diagnostics
+
+	log ""
+	log "########################################################################"
+	log "BENCHMARK COMPLETED"
+	log "Finished at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	log "########################################################################"
 
 	success "Benchmark orchestration completed!"
 }

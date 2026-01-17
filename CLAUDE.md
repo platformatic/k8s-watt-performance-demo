@@ -90,7 +90,7 @@ Optional (with defaults):
 - `FRAMEWORK` - Framework to benchmark (default: `next`, options: `next`, `react-router`)
 - `CLUSTER_NAME` - EKS cluster name (default: `watt-benchmark-<timestamp>`)
 - `NODE_TYPE` - EC2 instance type for EKS nodes (default: `m5.2xlarge`)
-- `NODE_COUNT` - Number of worker nodes (default: `3`)
+- `NODE_COUNT` - Number of worker nodes (default: `4`)
 - `AMI_ID` - Amazon Linux 2023 AMI for load testing EC2 (default: `ami-07b2b18045edffe90`)
 - `LOADTESTING_INSTANCE_TYPE` - EC2 instance type for k6 (default: `c7gn.2xlarge`, 16GB RAM for 10k VUs)
 - `ECR_REPO_NAME` - ECR repository name (default: `watt-benchmark`)
