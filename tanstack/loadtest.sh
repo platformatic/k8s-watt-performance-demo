@@ -350,9 +350,9 @@ echo "========================================================================"
 # Warm up all endpoints first to ensure NLB is ready
 warmup_all_endpoints
 
-# Test 1: PM2
-quick_warmup "PM2" "$URL_PM2/"
-run_k6_test "PM2 (2 workers)" "$URL_PM2/" 1
+# Test 1: Single Node
+quick_warmup "Node" "$URL_NODE/"
+run_k6_test "Single Node" "$URL_NODE/" 1
 
 echo ""
 echo "========================================================================"
@@ -370,9 +370,9 @@ echo "COOLDOWN: 480 seconds before next test"
 echo "========================================================================"
 sleep 480
 
-# Test 3: Single Node
-quick_warmup "Node" "$URL_NODE/"
-run_k6_test "Single Node" "$URL_NODE/" 3
+# Test 3: PM2
+quick_warmup "PM2" "$URL_PM2/"
+run_k6_test "PM2 (2 workers)" "$URL_PM2/" 3
 
 echo ""
 echo "========================================================================"
