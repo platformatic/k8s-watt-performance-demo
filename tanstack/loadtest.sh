@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# k6 load test script
-# Tests: PM2, Watt, Single Node via LoadBalancer URLs
+# E-commerce Load Test Script
+# Tests realistic e-commerce scenarios: homepage, search, card details, game browsing, sellers
 # Produces verbose output for debugging
 
 set -e
@@ -13,7 +13,7 @@ if [ -z "$URL_NODE" ] || [ -z "$URL_PM2" ] || [ -z "$URL_WATT" ]; then
 fi
 
 echo "========================================================================"
-echo "LOAD TEST CONFIGURATION"
+echo "E-COMMERCE LOAD TEST CONFIGURATION"
 echo "========================================================================"
 echo "URL_NODE: $URL_NODE"
 echo "URL_PM2:  $URL_PM2"
@@ -22,8 +22,9 @@ echo ""
 echo "Test Parameters:"
 echo "  - Initial NLB warm-up: 60s per endpoint (10->500 req/s ramp)"
 echo "  - Pre-test warm-up: 20s per endpoint (50->400 req/s ramp)"
-echo "  - Test duration: 120s per service @ 5000 req/s"
+echo "  - Test duration: 120s per service @ 1000 req/s mixed scenarios"
 echo "  - Cooldown: 480s between tests"
+echo "  - Scenarios: Homepage, Search, Card Detail, Game Browse, Sellers"
 echo "========================================================================"
 
 # Pre-flight connectivity check
@@ -82,15 +83,15 @@ export const options = {
       preAllocatedVUs: 100,
       maxVUs: 500,
       stages: [
-        { duration: '15s', target: 100 },   // Ramp to 100 req/s
-        { duration: '15s', target: 300 },   // Ramp to 300 req/s
-        { duration: '15s', target: 500 },   // Ramp to 500 req/s
-        { duration: '15s', target: 500 },   // Hold at 500 req/s
+        { duration: '15s', target: 100 },
+        { duration: '15s', target: 300 },
+        { duration: '15s', target: 500 },
+        { duration: '15s', target: 500 },
       ],
     },
   },
   thresholds: {
-    http_req_failed: ['rate<0.1'],  // Allow up to 10% failures during warmup
+    http_req_failed: ['rate<0.1'],
   },
 };
 
@@ -99,282 +100,209 @@ export default function () {
     timeout: "10s",
   });
   check(res, {
-    'warmup status ok': (r) => r.status === 200,
+    'status is 200': (r) => r.status === 200,
   });
 }
 EOF
 )
 
-# Function to warm up a single endpoint
-warmup_endpoint() {
-  local name=$1
-  local url=$2
-
-  echo ""
-  echo "--- Warming up $name at $url ---"
-  echo "  Ramping: 10 -> 100 -> 300 -> 500 req/s over 60s"
-  echo "  Started at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-  echo "$K6_WARMUP_SCRIPT" | k6 run --quiet --env TARGET="$url" - 2>&1 | tail -5
-
-  echo "  Warmup completed at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "  Settling for 10s..."
-  sleep 10
-}
-
-# Warm up ALL endpoints before any tests to ensure NLB is scaled
-warmup_all_endpoints() {
-  echo ""
-  echo "========================================================================"
-  echo "NLB WARM-UP PHASE"
-  echo "========================================================================"
-  echo "Warming up all endpoints to ensure NLB has scaled properly."
-  echo "This prevents cold-start bias in benchmark results."
-  echo ""
-
-  warmup_endpoint "PM2" "$URL_PM2/"
-  warmup_endpoint "Watt" "$URL_WATT/"
-  warmup_endpoint "Node" "$URL_NODE/"
-
-  echo ""
-  echo "========================================================================"
-  echo "NLB WARM-UP COMPLETE"
-  echo "========================================================================"
-  echo "All endpoints warmed up. Starting benchmark tests in 30s..."
-  sleep 30
-}
-
-# Short k6 script for quick pre-test warm-up (after cooldown)
-K6_QUICK_WARMUP=$(cat <<'EOF'
+# E-commerce k6 test script - mixed realistic scenarios
+K6_ECOMMERCE_SCRIPT=$(cat <<'EOF'
 import http from 'k6/http';
-export const options = {
-  scenarios: {
-    quick_warmup: {
-      executor: 'ramping-arrival-rate',
-      startRate: 50,
-      timeUnit: '1s',
-      preAllocatedVUs: 100,
-      maxVUs: 300,
-      stages: [
-        { duration: '10s', target: 200 },
-        { duration: '10s', target: 400 },
-      ],
-    },
-  },
-};
-export default function () {
-  http.get(__ENV.TARGET, { timeout: "5s" });
-}
-EOF
-)
-
-# Quick warm-up before each test (reconnect after cooldown)
-quick_warmup() {
-  local name=$1
-  local url=$2
-
-  echo ""
-  echo "--- Quick warm-up: $name ---"
-  echo "  Ramping 50 -> 400 req/s over 20s to re-establish connections"
-  echo "$K6_QUICK_WARMUP" | k6 run --quiet --env TARGET="$url" - 2>&1 | tail -3
-  echo "  Settling for 5s..."
-  sleep 5
-}
-
-# k6 test script with detailed metrics
-K6_SCRIPT=$(cat <<'EOF'
-import http from 'k6/http';
-import { check } from 'k6';
+import { check, sleep } from 'k6';
 import { Counter, Trend } from 'k6/metrics';
 
-// Custom metrics for detailed tracking
-const errorCounts = new Counter('request_errors');
-const successCount = new Counter('successful_requests');
+// Custom metrics
+const requestErrors = new Counter('request_errors');
+const successfulRequests = new Counter('successful_requests');
 const responseTime = new Trend('response_time_ms');
 
+// Sample data for realistic requests
+const SEARCH_QUERIES = ['pikachu', 'charizard', 'dragon', 'rare', 'ex', 'magic', 'yugioh'];
+const GAME_SLUGS = ['pokemon', 'magic', 'yugioh', 'digimon', 'onepiece'];
+const SET_SLUGS = ['scarlet-violet', 'paldea-evolved', 'murders-at-karlov-manor', 'phantom-nightmare'];
+
 export const options = {
-  throw: true,
   scenarios: {
-    constant_arrival_rate: {
+    mixed_load: {
       executor: 'constant-arrival-rate',
-      duration: '120s',
-      rate: 5000,
+      rate: 1000,
       timeUnit: '1s',
-      preAllocatedVUs: 500,
-      maxVUs: 10000,
+      duration: '120s',
+      preAllocatedVUs: 2000,
+      maxVUs: 20000,
     },
   },
-  // More detailed summary output
-  summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
 };
 
-const countMessages = [
-  'connection refused',
-  'request timeout',
-  'context deadline exceeded',
-  'connection reset',
-  'no such host',
-  'EOF',
-];
+// Helper to make request and track metrics
+function makeRequest(url, name) {
+  const start = Date.now();
+  const res = http.get(url, { timeout: "10s", tags: { name: name } });
+  const duration = Date.now() - start;
+
+  responseTime.add(duration);
+
+  if (res.status === 200) {
+    successfulRequests.add(1);
+  } else {
+    requestErrors.add(1);
+  }
+
+  return res;
+}
 
 export default function () {
-  try {
-    const start = Date.now();
-    const res = http.get(__ENV.TARGET, {
-      timeout: "5s",
-      tags: { name: 'homepage' },
-    });
-    const duration = Date.now() - start;
+  const BASE = __ENV.TARGET;
 
-    responseTime.add(duration);
+  // Randomly select scenario (weighted distribution)
+  const rand = Math.random();
 
-    const passed = check(res, {
-      'status is 200': (r) => r.status === 200,
-      'response has body': (r) => r.body && r.body.length > 0,
-    });
-
-    if (passed) {
-      successCount.add(1);
-    }
-  } catch (err) {
-    if (err) {
-      let found = false;
-      const errMsg = err.value ? err.value.toString() : err.toString();
-
-      for (let msg of countMessages) {
-        if (errMsg.toLowerCase().includes(msg.toLowerCase())) {
-          errorCounts.add(1, { errorType: msg });
-          found = true;
-          break;
-        }
-      }
-
-      if (!found) {
-        errorCounts.add(1, { errorType: 'Unknown', message: errMsg.substring(0, 100) });
-      }
-    }
+  if (rand < 0.20) {
+    // 20% - Homepage
+    makeRequest(BASE + '/', 'homepage');
+  } else if (rand < 0.45) {
+    // 25% - Search with query
+    const query = SEARCH_QUERIES[Math.floor(Math.random() * SEARCH_QUERIES.length)];
+    const page = Math.floor(Math.random() * 5) + 1;
+    makeRequest(BASE + '/search?q=' + query + '&page=' + page, 'search');
+  } else if (rand < 0.65) {
+    // 20% - Card detail (random card ID)
+    const gameId = GAME_SLUGS[Math.floor(Math.random() * GAME_SLUGS.length)];
+    const setNum = String(Math.floor(Math.random() * 10) + 1).padStart(2, '0');
+    const cardNum = String(Math.floor(Math.random() * 200) + 1).padStart(3, '0');
+    const cardId = gameId + '-set-' + setNum + '-' + cardNum;
+    makeRequest(BASE + '/cards/' + cardId, 'card_detail');
+  } else if (rand < 0.80) {
+    // 15% - Game detail
+    const gameSlug = GAME_SLUGS[Math.floor(Math.random() * GAME_SLUGS.length)];
+    makeRequest(BASE + '/games/' + gameSlug, 'game_detail');
+  } else if (rand < 0.90) {
+    // 10% - Games list
+    makeRequest(BASE + '/games', 'games_list');
+  } else if (rand < 0.95) {
+    // 5% - Sellers list
+    makeRequest(BASE + '/sellers', 'sellers_list');
+  } else {
+    // 5% - Set detail (random set)
+    const setSlug = SET_SLUGS[Math.floor(Math.random() * SET_SLUGS.length)];
+    const page = Math.floor(Math.random() * 3) + 1;
+    makeRequest(BASE + '/sets/' + setSlug + '?page=' + page, 'set_detail');
   }
 }
 
 export function handleSummary(data) {
-  // Print detailed summary to console
-  console.log('\n========== DETAILED METRICS ==========');
+  const total = data.metrics.successful_requests.values.count + data.metrics.request_errors.values.count;
+  const success = data.metrics.successful_requests.values.count;
+  const errors = data.metrics.request_errors.values.count;
+  const successRate = total > 0 ? ((success / total) * 100).toFixed(2) : 0;
 
-  if (data.metrics.http_req_duration) {
-    const d = data.metrics.http_req_duration.values;
-    console.log(`HTTP Request Duration:`);
-    console.log(`  avg=${d.avg.toFixed(2)}ms min=${d.min.toFixed(2)}ms max=${d.max.toFixed(2)}ms`);
-    console.log(`  p90=${d['p(90)'].toFixed(2)}ms p95=${d['p(95)'].toFixed(2)}ms p99=${d['p(99)'].toFixed(2)}ms`);
-  }
+  console.log('\n========================================');
+  console.log('E-COMMERCE LOAD TEST SUMMARY');
+  console.log('========================================');
+  console.log('Total Requests:    ' + total);
+  console.log('Successful:        ' + success);
+  console.log('Errors:            ' + errors);
+  console.log('Success Rate:      ' + successRate + '%');
+  console.log('');
+  console.log('Response Times (ms):');
+  console.log('  Average:         ' + data.metrics.response_time_ms.values.avg.toFixed(2));
+  console.log('  Min:             ' + data.metrics.response_time_ms.values.min.toFixed(2));
+  console.log('  Median:          ' + data.metrics.response_time_ms.values.med.toFixed(2));
+  console.log('  Max:             ' + data.metrics.response_time_ms.values.max.toFixed(2));
+  console.log('  p(90):           ' + data.metrics.response_time_ms.values['p(90)'].toFixed(2));
+  console.log('  p(95):           ' + data.metrics.response_time_ms.values['p(95)'].toFixed(2));
+  console.log('  p(99):           ' + data.metrics.response_time_ms.values['p(99)'].toFixed(2));
+  console.log('========================================\n');
 
-  if (data.metrics.http_reqs) {
-    console.log(`Total Requests: ${data.metrics.http_reqs.values.count}`);
-    console.log(`Requests/sec: ${data.metrics.http_reqs.values.rate.toFixed(2)}`);
-  }
-
-  if (data.metrics.http_req_failed) {
-    const failed = data.metrics.http_req_failed.values;
-    console.log(`Failed Requests: ${(failed.rate * 100).toFixed(2)}%`);
-  }
-
-  if (data.metrics.successful_requests) {
-    console.log(`Successful Requests: ${data.metrics.successful_requests.values.count}`);
-  }
-
-  if (data.metrics.request_errors) {
-    console.log(`Error Count: ${data.metrics.request_errors.values.count}`);
-  }
-
-  if (data.metrics.vus_max) {
-    console.log(`Max VUs: ${data.metrics.vus_max.values.max}`);
-  }
-
-  if (data.metrics.dropped_iterations) {
-    console.log(`Dropped Iterations: ${data.metrics.dropped_iterations.values.count}`);
-  }
-
-  console.log('=======================================\n');
-
-  return {
-    stdout: textSummary(data, { indent: '  ', enableColors: false }),
-  };
+  return {};
 }
-
-import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 EOF
 )
 
-# Function to run k6 test with verbose output
-run_k6_test() {
+run_warmup() {
   local name=$1
   local url=$2
-  local test_num=$3
-
   echo ""
-  echo "########################################################################"
-  echo "TEST $test_num: $name"
-  echo "URL: $url"
-  echo "Started at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "########################################################################"
-
-  # Show system stats before test
-  echo ""
-  echo "--- System Stats Before Test ---"
-  free -h 2>/dev/null || true
-  echo ""
-
-  # --quiet removes progress bar updates (which truncate EC2 console output) but keeps the summary
-  echo "$K6_SCRIPT" | k6 run --quiet --env TARGET="$url" --summary-trend-stats="avg,min,med,max,p(90),p(95),p(99)" -
-
-  local exit_code=$?
-
-  echo ""
-  echo "--- Test Completed ---"
-  echo "Finished at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "Exit code: $exit_code"
-
-  # Show system stats after test
-  echo ""
-  echo "--- System Stats After Test ---"
-  free -h 2>/dev/null || true
-  echo ""
-
-  return $exit_code
+  echo "========================================================================"
+  echo "NLB WARM-UP: $name"
+  echo "Target: $url"
+  echo "Duration: 60s (10->500 req/s ramp)"
+  echo "========================================================================"
+  echo "$K6_WARMUP_SCRIPT" | k6 run --quiet -e TARGET="$url" -
+  echo "Warm-up complete for $name"
 }
 
+run_pre_test_warmup() {
+  local name=$1
+  local url=$2
+  echo ""
+  echo "------------------------------------------------------------------------"
+  echo "Pre-test warm-up: $name (20s @ 50->400 req/s)"
+  echo "------------------------------------------------------------------------"
+  echo "$K6_WARMUP_SCRIPT" | k6 run --quiet -e TARGET="$url" - --duration 20s
+}
+
+run_ecommerce_test() {
+  local name=$1
+  local url=$2
+  echo ""
+  echo "========================================================================"
+  echo "E-COMMERCE LOAD TEST: $name"
+  echo "Target: $url"
+  echo "Duration: 120s @ 1000 req/s (mixed scenarios)"
+  echo "========================================================================"
+
+  # Pre-test warm-up
+  run_pre_test_warmup "$name" "$url"
+
+  echo ""
+  echo "Starting main load test..."
+  echo "$K6_ECOMMERCE_SCRIPT" | k6 run -e TARGET="$url" -
+
+  echo ""
+  echo "Test complete for $name"
+}
+
+# Phase 1: NLB Warm-up for all endpoints
 echo ""
 echo "========================================================================"
-echo "STARTING BENCHMARK TESTS"
+echo "PHASE 1: NLB WARM-UP (ALL ENDPOINTS)"
 echo "========================================================================"
-
-# Warm up all endpoints first to ensure NLB is ready
-warmup_all_endpoints
-
-# Test 1: Single Node
-quick_warmup "Node" "$URL_NODE/"
-run_k6_test "Single Node" "$URL_NODE/" 1
+run_warmup "PM2" "$URL_PM2"
+run_warmup "Watt" "$URL_WATT"
+run_warmup "Node" "$URL_NODE"
 
 echo ""
 echo "========================================================================"
-echo "COOLDOWN: 480 seconds before next test"
+echo "NLB warm-up complete. Waiting 60s before starting tests..."
 echo "========================================================================"
+sleep 60
+
+# Phase 2: Run load tests
+echo ""
+echo "========================================================================"
+echo "PHASE 2: E-COMMERCE LOAD TESTS"
+echo "========================================================================"
+
+# Test PM2 first
+run_ecommerce_test "PM2" "$URL_PM2"
+
+echo ""
+echo "Cooldown: 480s before next test..."
 sleep 480
 
-# Test 2: Watt
-quick_warmup "Watt" "$URL_WATT/"
-run_k6_test "Watt (2 workers)" "$URL_WATT/" 2
+# Test Watt
+run_ecommerce_test "Watt" "$URL_WATT"
 
 echo ""
-echo "========================================================================"
-echo "COOLDOWN: 480 seconds before next test"
-echo "========================================================================"
+echo "Cooldown: 480s before next test..."
 sleep 480
 
-# Test 3: PM2
-quick_warmup "PM2" "$URL_PM2/"
-run_k6_test "PM2 (2 workers)" "$URL_PM2/" 3
+# Test Node
+run_ecommerce_test "Node" "$URL_NODE"
 
 echo ""
 echo "========================================================================"
-echo "ALL TESTS COMPLETED"
+echo "ALL E-COMMERCE LOAD TESTS COMPLETE"
 echo "========================================================================"
