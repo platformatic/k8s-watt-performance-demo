@@ -29,6 +29,12 @@ spec:
           env:
             - name: SCRIPT_NAME
               value: "start:node"
+            - name: DB_DELAY_MIN
+              value: "1"
+            - name: DB_DELAY_MAX
+              value: "5"
+            - name: DB_DELAY_ENABLED
+              value: "true"
           ports:
             - name: 'app'
               containerPort: 3000
@@ -100,6 +106,12 @@ spec:
               value: "start:pm2r"
             - name: WORKERS
               value: "2"
+            - name: DB_DELAY_MIN
+              value: "1"
+            - name: DB_DELAY_MAX
+              value: "5"
+            - name: DB_DELAY_ENABLED
+              value: "true"
           ports:
             - name: 'app'
               containerPort: 3000
@@ -177,6 +189,12 @@ spec:
               value: "true"
             - name: BACKLOG
               value: "1024"
+            - name: DB_DELAY_MIN
+              value: "1"
+            - name: DB_DELAY_MAX
+              value: "5"
+            - name: DB_DELAY_ENABLED
+              value: "true"
           ports:
             - name: 'app'
               containerPort: 3000

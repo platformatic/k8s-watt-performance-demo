@@ -2,10 +2,10 @@
 import {
   HeadContent,
   Link,
+  Outlet,
   Scripts,
   createRootRoute,
 } from '@tanstack/react-router'
-import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import * as React from 'react'
 import { DefaultCatchBoundary } from '~/components/DefaultCatchBoundary'
 import { NotFound } from '~/components/NotFound'
@@ -23,107 +23,87 @@ export const Route = createRootRoute({
         content: 'width=device-width, initial-scale=1',
       },
       ...seo({
-        title:
-          'TanStack Start | Type-Safe, Client-First, Full-Stack React Framework',
-        description: `TanStack Start is a type-safe, client-first, full-stack React framework. `,
+        title: 'CardMarket - Trading Card Marketplace',
+        description: 'Buy and sell trading cards from Pokemon, Magic, Yu-Gi-Oh and more',
       }),
     ],
     links: [
       { rel: 'stylesheet', href: appCss },
       {
-        rel: 'apple-touch-icon',
-        sizes: '180x180',
-        href: '/apple-touch-icon.png',
+        rel: 'preconnect',
+        href: 'https://fonts.googleapis.com',
       },
       {
-        rel: 'icon',
-        type: 'image/png',
-        sizes: '32x32',
-        href: '/favicon-32x32.png',
+        rel: 'preconnect',
+        href: 'https://fonts.gstatic.com',
+        crossOrigin: 'anonymous',
       },
       {
-        rel: 'icon',
-        type: 'image/png',
-        sizes: '16x16',
-        href: '/favicon-16x16.png',
+        rel: 'stylesheet',
+        href: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap',
       },
-      { rel: 'manifest', href: '/site.webmanifest', color: '#fffff' },
       { rel: 'icon', href: '/favicon.ico' },
-    ],
-    scripts: [
-      {
-        src: '/customScript.js',
-        type: 'text/javascript',
-      },
     ],
   }),
   errorComponent: DefaultCatchBoundary,
   notFoundComponent: () => <NotFound />,
-  shellComponent: RootDocument,
+  component: RootComponent,
 })
 
-function RootDocument({ children }: { children: React.ReactNode }) {
+function RootComponent() {
   return (
-    <html>
+    <html lang="en">
       <head>
         <HeadContent />
       </head>
-      <body>
-        <div className="p-2 flex gap-2 text-lg">
-          <Link
-            to="/"
-            activeProps={{
-              className: 'font-bold',
-            }}
-            activeOptions={{ exact: true }}
-          >
-            Home
-          </Link>{' '}
-          <Link
-            to="/posts"
-            activeProps={{
-              className: 'font-bold',
-            }}
-          >
-            Posts
-          </Link>{' '}
-          <Link
-            to="/users"
-            activeProps={{
-              className: 'font-bold',
-            }}
-          >
-            Users
-          </Link>{' '}
-          <Link
-            to="/route-a"
-            activeProps={{
-              className: 'font-bold',
-            }}
-          >
-            Pathless Layout
-          </Link>{' '}
-          <Link
-            to="/deferred"
-            activeProps={{
-              className: 'font-bold',
-            }}
-          >
-            Deferred
-          </Link>{' '}
-          <Link
-            // @ts-expect-error
-            to="/this-route-does-not-exist"
-            activeProps={{
-              className: 'font-bold',
-            }}
-          >
-            This Route Does Not Exist
-          </Link>
-        </div>
-        <hr />
-        {children}
-        <TanStackRouterDevtools position="bottom-right" />
+      <body className="min-h-screen bg-gray-50 font-sans">
+        <header className="bg-white shadow-sm border-b">
+          <div className="max-w-7xl mx-auto px-4 py-4">
+            <nav className="flex items-center justify-between">
+              <Link to="/" className="text-2xl font-bold text-blue-600">
+                CardMarket
+              </Link>
+              <div className="flex items-center gap-6">
+                <Link
+                  to="/games"
+                  className="text-gray-600 hover:text-gray-900"
+                  activeProps={{ className: 'text-gray-900 font-semibold' }}
+                >
+                  Games
+                </Link>
+                <Link
+                  to="/search"
+                  className="text-gray-600 hover:text-gray-900"
+                  activeProps={{ className: 'text-gray-900 font-semibold' }}
+                >
+                  Search
+                </Link>
+                <Link
+                  to="/sellers"
+                  className="text-gray-600 hover:text-gray-900"
+                  activeProps={{ className: 'text-gray-900 font-semibold' }}
+                >
+                  Sellers
+                </Link>
+                <Link
+                  to="/cart"
+                  className="text-gray-600 hover:text-gray-900"
+                  activeProps={{ className: 'text-gray-900 font-semibold' }}
+                >
+                  Cart
+                </Link>
+              </div>
+            </nav>
+          </div>
+        </header>
+        <main className="max-w-7xl mx-auto px-4 py-8">
+          <Outlet />
+        </main>
+        <footer className="bg-white border-t mt-auto">
+          <div className="max-w-7xl mx-auto px-4 py-6 text-center text-gray-500 text-sm">
+            CardMarket - Trading Card Marketplace Benchmark
+          </div>
+        </footer>
         <Scripts />
       </body>
     </html>

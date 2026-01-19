@@ -1,0 +1,14 @@
+{
+  "name": "ecommerce-integration-tests",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:next": "BASE_URL=http://localhost:3000 playwright test",
+    "test:react-router": "BASE_URL=http://localhost:3001 playwright test",
+    "test:tanstack": "BASE_URL=http://localhost:3002 playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0"
+  }
+}
