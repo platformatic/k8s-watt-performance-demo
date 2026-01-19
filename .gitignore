@@ -5,3 +5,4 @@ dist/
 .tanstack/
 results/
 *.log
+.githuman
