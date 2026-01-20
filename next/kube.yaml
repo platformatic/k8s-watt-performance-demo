@@ -104,8 +104,6 @@ spec:
           env:
             - name: SCRIPT_NAME
               value: "start:pm2r"
-            - name: WORKERS
-              value: "2"
             - name: DB_DELAY_MIN
               value: "1"
             - name: DB_DELAY_MAX
@@ -181,14 +179,6 @@ spec:
           env:
             - name: SCRIPT_NAME
               value: "start:watt"
-            - name: WORKERS
-              value: "2"
-            - name: PLT_SERVER_METRICS
-              value: "false"
-            - name: PLT_SERVER_HEALTH
-              value: "true"
-            - name: BACKLOG
-              value: "1024"
             - name: DB_DELAY_MIN
               value: "1"
             - name: DB_DELAY_MAX
