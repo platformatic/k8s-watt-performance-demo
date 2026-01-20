@@ -17,10 +17,10 @@
     },
     "health": {
       "enabled": "{PLT_SERVER_HEALTH}",
-      "maxHeapTotal": "4GB",
+      "maxHeapTotal": "2GB",
       "maxYoungGeneration": "256MB"
     },
-    "managementApi": true,
+    "managementApi": false,
     "workers": {
       "static": "{WORKERS}"
     }

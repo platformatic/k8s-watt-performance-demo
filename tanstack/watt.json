@@ -22,10 +22,10 @@
       "enabled": "{PLT_SERVER_HEALTH}",
       "interval": 5000,
       "maxUnhealthyChecks": 3,
-      "maxHeapTotal": "4GB",
+      "maxHeapTotal": "2GB",
       "maxYoungGeneration": "256MB"
     },
-    "managementApi": true,
+    "managementApi": false,
     "gracefulShutdown": {
       "runtime": 1000,
       "application": 1000

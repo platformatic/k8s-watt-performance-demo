@@ -79,7 +79,7 @@ class JsonDatabase {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private loadCollection<T>(name: string): T[] {
+  private async loadCollection<T>(name: string): Promise<T[]> {
     if (this.cache.has(name)) {
       return this.cache.get(name) as T[];
     }
@@ -91,7 +91,8 @@ class JsonDatabase {
     }
 
     try {
-      const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      const content = await fs.promises.readFile(filePath, 'utf-8');
+      const data = JSON.parse(content);
       this.cache.set(name, data);
       return data as T[];
     } catch (err) {
@@ -141,19 +142,19 @@ class JsonDatabase {
   // Initialize (preload all data)
   async initialize(): Promise<void> {
     if (this.initialized) return;
-    this.loadCollection<Game>('games');
-    this.loadCollection<CardSet>('sets');
-    this.loadCollection<Card>('cards');
-    this.loadCollection<Seller>('sellers');
-    this.loadCollection<Listing>('listings');
-    this.loadCollection<Featured>('featured');
+    await this.loadCollection<Game>('games');
+    await this.loadCollection<CardSet>('sets');
+    await this.loadCollection<Card>('cards');
+    await this.loadCollection<Seller>('sellers');
+    await this.loadCollection<Listing>('listings');
+    await this.loadCollection<Featured>('featured');
     this.initialized = true;
   }
 
   // Generic query methods
   async query<T>(collection: string, filter?: Partial<T>): Promise<T[]> {
     await this.delay();
-    const data = this.loadCollection<T>(collection);
+    const data = await this.loadCollection<T>(collection);
     return filter ? this.applyFilter(data, filter) : data;
   }
 
@@ -162,7 +163,7 @@ class JsonDatabase {
     id: string
   ): Promise<T | undefined> {
     await this.delay();
-    const data = this.loadCollection<T>(collection);
+    const data = await this.loadCollection<T>(collection);
     return data.find((item) => item.id === id);
   }
 
@@ -171,7 +172,7 @@ class JsonDatabase {
     slug: string
   ): Promise<T | undefined> {
     await this.delay();
-    const data = this.loadCollection<T>(collection);
+    const data = await this.loadCollection<T>(collection);
     return data.find((item) => item.slug === slug);
   }
 
@@ -180,7 +181,7 @@ class JsonDatabase {
     ids: string[]
   ): Promise<T[]> {
     await this.delay();
-    const data = this.loadCollection<T>(collection);
+    const data = await this.loadCollection<T>(collection);
     const idSet = new Set(ids);
     return data.filter((item) => idSet.has(item.id));
   }
@@ -191,7 +192,7 @@ class JsonDatabase {
   ): Promise<PaginatedResponse<T>> {
     await this.delay();
     const { page = 1, limit = 20, filter, sort } = options;
-    let data = this.loadCollection<T>(collection);
+    let data = await this.loadCollection<T>(collection);
 
     if (filter) {
       data = this.applyFilter(data, filter);
@@ -228,7 +229,7 @@ class JsonDatabase {
     const game = await this.getGameBySlug(slug);
     if (!game) return undefined;
 
-    const allSets = this.loadCollection<CardSet>('sets');
+    const allSets = await this.loadCollection<CardSet>('sets');
     const sets = allSets.filter((s) => s.gameId === game.id);
 
     return { ...game, sets };
@@ -252,10 +253,11 @@ class JsonDatabase {
     const set = await this.getSetBySlug(slug);
     if (!set) return undefined;
 
-    const game = this.loadCollection<Game>('games').find((g) => g.id === set.gameId);
+    const games = await this.loadCollection<Game>('games');
+    const game = games.find((g) => g.id === set.gameId);
     if (!game) return undefined;
 
-    const allCards = this.loadCollection<Card>('cards');
+    const allCards = await this.loadCollection<Card>('cards');
     const setCards = allCards.filter((c) => c.setId === set.id);
     const start = (page - 1) * limit;
     const cards = setCards.slice(start, start + limit);
@@ -267,18 +269,20 @@ class JsonDatabase {
     await this.delay();
     const { game, set, rarity, q, page = 1, limit = 20, sort, order = 'asc' } = params;
 
-    let cards = this.loadCollection<Card>('cards');
+    let cards = await this.loadCollection<Card>('cards');
 
     // Apply filters
     if (game) {
-      const gameObj = this.loadCollection<Game>('games').find((g) => g.slug === game);
+      const games = await this.loadCollection<Game>('games');
+      const gameObj = games.find((g) => g.slug === game);
       if (gameObj) {
         cards = cards.filter((c) => c.gameId === gameObj.id);
       }
     }
 
     if (set) {
-      const setObj = this.loadCollection<CardSet>('sets').find((s) => s.slug === set);
+      const sets = await this.loadCollection<CardSet>('sets');
+      const setObj = sets.find((s) => s.slug === set);
       if (setObj) {
         cards = cards.filter((c) => c.setId === setObj.id);
       }
@@ -294,7 +298,7 @@ class JsonDatabase {
 
     // Apply price filters if needed (requires joining with listings)
     if (params.minPrice !== undefined || params.maxPrice !== undefined) {
-      const listings = this.loadCollection<Listing>('listings');
+      const listings = await this.loadCollection<Listing>('listings');
       const cardPrices = new Map<string, number>();
 
       for (const listing of listings) {
@@ -318,7 +322,7 @@ class JsonDatabase {
       cards = this.applySort(cards, { field: 'name', order });
     } else if (sort === 'price') {
       // Sort by lowest listing price
-      const listings = this.loadCollection<Listing>('listings');
+      const listings = await this.loadCollection<Listing>('listings');
       const cardPrices = new Map<string, number>();
       for (const listing of listings) {
         const existing = cardPrices.get(listing.cardId);
@@ -355,7 +359,7 @@ class JsonDatabase {
     const card = await this.getCardById(id);
     if (!card) return undefined;
 
-    const allListings = this.loadCollection<Listing>('listings');
+    const allListings = await this.loadCollection<Listing>('listings');
     const listings = allListings.filter((l) => l.cardId === id);
 
     const lowestPrice = listings.length > 0
@@ -374,7 +378,7 @@ class JsonDatabase {
     await this.delay();
     const { cardId, sellerId, condition, minPrice, maxPrice, page = 1, limit = 20 } = params;
 
-    let listings = this.loadCollection<Listing>('listings');
+    let listings = await this.loadCollection<Listing>('listings');
 
     if (cardId) {
       listings = listings.filter((l) => l.cardId === cardId);
@@ -421,8 +425,10 @@ class JsonDatabase {
     const listing = await this.getListingById(id);
     if (!listing) return undefined;
 
-    const card = this.loadCollection<Card>('cards').find((c) => c.id === listing.cardId);
-    const seller = this.loadCollection<Seller>('sellers').find((s) => s.id === listing.sellerId);
+    const cards = await this.loadCollection<Card>('cards');
+    const sellers = await this.loadCollection<Seller>('sellers');
+    const card = cards.find((c) => c.id === listing.cardId);
+    const seller = sellers.find((s) => s.id === listing.sellerId);
 
     if (!card || !seller) return undefined;
 
@@ -446,7 +452,7 @@ class JsonDatabase {
     const seller = await this.getSellerBySlug(slug);
     if (!seller) return undefined;
 
-    const allListings = this.loadCollection<Listing>('listings');
+    const allListings = await this.loadCollection<Listing>('listings');
     const sellerListings = allListings.filter((l) => l.sellerId === seller.id);
     const start = (page - 1) * limit;
     const listings = sellerListings.slice(start, start + limit);
@@ -456,7 +462,7 @@ class JsonDatabase {
 
   async getFeatured(): Promise<Featured | null> {
     await this.delay();
-    const data = this.loadCollection<Featured>('featured');
+    const data = await this.loadCollection<Featured>('featured');
     // Featured is stored as an array with one item or as the object directly
     if (Array.isArray(data)) {
       return data[0] || null;
@@ -472,11 +478,32 @@ class JsonDatabase {
       return null;
     }
     try {
-      const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      const content = await fs.promises.readFile(filePath, 'utf-8');
+      const data = JSON.parse(content);
       return data as Featured;
     } catch {
       return null;
     }
+  }
+
+  async getTrendingCards(limit = 10): Promise<Card[]> {
+    await this.delay();
+    const featured = await this.getFeatured();
+    if (!featured) return [];
+
+    const trendingIds = featured.trendingCards.slice(0, limit);
+    const cards = await this.loadCollection<Card>('cards');
+    return cards.filter((c) => trendingIds.includes(c.id));
+  }
+
+  async getNewReleaseSets(limit = 5): Promise<CardSet[]> {
+    await this.delay();
+    const featured = await this.getFeatured();
+    if (!featured) return [];
+
+    const releaseIds = featured.newReleases.slice(0, limit);
+    const sets = await this.loadCollection<CardSet>('sets');
+    return sets.filter((s) => releaseIds.includes(s.id));
   }
 }
 
