@@ -116,6 +116,7 @@ function CardDetailPage() {
                           <Link
                             to="/sellers/$slug"
                             params={{ slug: seller?.slug || '' }}
+                            search={{ page: 1 }}
                             className="text-blue-600 hover:underline"
                           >
                             {seller?.name || 'Unknown'}

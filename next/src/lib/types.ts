@@ -26,7 +26,7 @@ export interface CardAttributes {
   attack?: string;
   defense?: string;
   level?: number;
-  [key: string]: unknown;
+  [key: string]: string | number | string[] | undefined;
 }
 
 export interface Card {
@@ -134,10 +134,14 @@ export interface GameWithSets extends Game {
 export interface SetWithCards extends CardSet {
   cards: Card[];
   game: Game;
+  total: number;
+  totalPages: number;
 }
 
 export interface SellerWithListings extends Seller {
   listings: Listing[];
+  total: number;
+  totalPages: number;
 }
 
 export interface ListingWithDetails extends Listing {

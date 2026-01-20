@@ -36,6 +36,7 @@ function SellersListPage() {
             key={seller.id}
             to="/sellers/$slug"
             params={{ slug: seller.slug }}
+            search={{ page: 1 }}
             className="bg-white rounded-lg shadow p-6 hover:shadow-md transition"
           >
             <div className="flex items-start justify-between mb-4">
