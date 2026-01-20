@@ -288,6 +288,11 @@ echo "========================================================================"
 # Test PM2 first
 run_ecommerce_test "PM2" "$URL_PM2"
 
+# Upload results to S3 after PM2 test (if function is available)
+if type upload_to_s3 &>/dev/null; then
+  upload_to_s3 "pm2"
+fi
+
 echo ""
 echo "Cooldown: 480s before next test..."
 sleep 480
@@ -295,12 +300,22 @@ sleep 480
 # Test Watt
 run_ecommerce_test "Watt" "$URL_WATT"
 
+# Upload results to S3 after Watt test (if function is available)
+if type upload_to_s3 &>/dev/null; then
+  upload_to_s3 "watt"
+fi
+
 echo ""
 echo "Cooldown: 480s before next test..."
 sleep 480
 
 # Test Node
 run_ecommerce_test "Node" "$URL_NODE"
+
+# Upload results to S3 after Node test (if function is available)
+if type upload_to_s3 &>/dev/null; then
+  upload_to_s3 "node"
+fi
 
 echo ""
 echo "========================================================================"

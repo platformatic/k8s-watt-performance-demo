@@ -21,10 +21,13 @@ AMI_ID="${AMI_ID:-ami-07b2b18045edffe90}" # Amazon Linux 2023 arm64
 LOADTESTING_INSTANCE_TYPE="${LOADTESTING_INSTANCE_TYPE:-c7gn.2xlarge}"
 ECR_REPO_NAME="${ECR_REPO_NAME:-watt-benchmark}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
+S3_BUCKET_NAME=""  # Will be set dynamically with cluster name
 
 # Infrastructure resource names (set by creation functions)
 CLUSTER_ROLE_NAME=""
 NODE_ROLE_NAME=""
+LOADTEST_ROLE_NAME=""
+LOADTEST_INSTANCE_PROFILE_NAME=""
 VPC_ID=""
 SUBNET_IDS=""
 IGW_ID=""
@@ -275,6 +278,38 @@ cleanup_instances() {
 			--force \
 			--profile "$AWS_PROFILE" 2>/dev/null || true
 	fi
+
+	# Delete load test instance profile and role
+	if [[ -n "$LOADTEST_INSTANCE_PROFILE_NAME" ]]; then
+		log "Deleting load test instance profile: $LOADTEST_INSTANCE_PROFILE_NAME"
+		aws iam remove-role-from-instance-profile \
+			--instance-profile-name "$LOADTEST_INSTANCE_PROFILE_NAME" \
+			--role-name "$LOADTEST_ROLE_NAME" \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
+		aws iam delete-instance-profile \
+			--instance-profile-name "$LOADTEST_INSTANCE_PROFILE_NAME" \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
+	fi
+
+	if [[ -n "$LOADTEST_ROLE_NAME" ]]; then
+		log "Deleting load test IAM role: $LOADTEST_ROLE_NAME"
+		aws iam delete-role-policy \
+			--role-name "$LOADTEST_ROLE_NAME" \
+			--policy-name "S3BenchmarkAccess" \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
+		aws iam delete-role \
+			--role-name "$LOADTEST_ROLE_NAME" \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
+	fi
+
+	# Delete S3 bucket (must empty first)
+	if [[ -n "$S3_BUCKET_NAME" ]]; then
+		log "Deleting S3 bucket: $S3_BUCKET_NAME"
+		aws s3 rm "s3://$S3_BUCKET_NAME" --recursive \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
+		aws s3 rb "s3://$S3_BUCKET_NAME" \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
+	fi
 }
 
 trap generic_cleanup EXIT INT TERM
@@ -319,7 +354,7 @@ validate_framework_manifests() {
 
 	if [[ ! -d "$FRAMEWORK_SOURCE_DIR" ]]; then
 		error "Framework directory not found: $FRAMEWORK_SOURCE_DIR"
-		error "Available frameworks: next, react-router"
+		error "Available frameworks: next, react-router, tanstack"
 		return 1
 	fi
 
@@ -687,6 +722,100 @@ EOF
 
 	log "Node role ARN: $NODE_ROLE_ARN"
 	success "Node IAM role created"
+}
+
+create_s3_bucket() {
+	S3_BUCKET_NAME="benchmark-results-${CLUSTER_NAME}"
+	log "Creating S3 bucket: $S3_BUCKET_NAME"
+
+	# S3 bucket creation syntax differs by region
+	if [[ "$AWS_REGION" == "us-east-1" ]]; then
+		aws s3api create-bucket \
+			--bucket "$S3_BUCKET_NAME" \
+			--profile "$AWS_PROFILE" \
+			>/dev/null
+	else
+		aws s3api create-bucket \
+			--bucket "$S3_BUCKET_NAME" \
+			--create-bucket-configuration LocationConstraint="$AWS_REGION" \
+			--profile "$AWS_PROFILE" \
+			>/dev/null
+	fi
+
+	success "S3 bucket created: $S3_BUCKET_NAME"
+}
+
+create_loadtest_iam_role() {
+	LOADTEST_ROLE_NAME="${CLUSTER_NAME}-loadtest-role"
+	LOADTEST_INSTANCE_PROFILE_NAME="${CLUSTER_NAME}-loadtest-profile"
+
+	log "Creating load test IAM role: $LOADTEST_ROLE_NAME"
+
+	# Create trust policy for EC2
+	local trust_policy='{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": {
+					"Service": "ec2.amazonaws.com"
+				},
+				"Action": "sts:AssumeRole"
+			}
+		]
+	}'
+
+	aws iam create-role \
+		--role-name "$LOADTEST_ROLE_NAME" \
+		--assume-role-policy-document "$trust_policy" \
+		--profile "$AWS_PROFILE" \
+		>/dev/null
+
+	# Create S3 access policy
+	local s3_policy=$(cat <<EOF
+{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Effect": "Allow",
+			"Action": [
+				"s3:PutObject",
+				"s3:GetObject",
+				"s3:ListBucket"
+			],
+			"Resource": [
+				"arn:aws:s3:::$S3_BUCKET_NAME",
+				"arn:aws:s3:::$S3_BUCKET_NAME/*"
+			]
+		}
+	]
+}
+EOF
+)
+
+	aws iam put-role-policy \
+		--role-name "$LOADTEST_ROLE_NAME" \
+		--policy-name "S3BenchmarkAccess" \
+		--policy-document "$s3_policy" \
+		--profile "$AWS_PROFILE"
+
+	# Create instance profile
+	aws iam create-instance-profile \
+		--instance-profile-name "$LOADTEST_INSTANCE_PROFILE_NAME" \
+		--profile "$AWS_PROFILE" \
+		>/dev/null
+
+	# Add role to instance profile
+	aws iam add-role-to-instance-profile \
+		--instance-profile-name "$LOADTEST_INSTANCE_PROFILE_NAME" \
+		--role-name "$LOADTEST_ROLE_NAME" \
+		--profile "$AWS_PROFILE"
+
+	# Wait for instance profile to be available
+	log "Waiting for instance profile to propagate..."
+	sleep 10
+
+	success "Load test IAM role and instance profile created"
 }
 
 create_eks_cluster() {
@@ -1234,19 +1363,39 @@ echo 'Starting benchmark via LoadBalancers'
 export URL_NODE="$url_node"
 export URL_PM2="$url_pm2"
 export URL_WATT="$url_watt"
+export S3_BUCKET="$S3_BUCKET_NAME"
+export AWS_REGION="$AWS_REGION"
 
 # Create log file for benchmark results
 BENCHMARK_LOG="/var/log/benchmark-results.log"
 touch "\$BENCHMARK_LOG"
 chmod 644 "\$BENCHMARK_LOG"
 
+# Function to upload results to S3 (called after each test phase)
+upload_to_s3() {
+    local phase=\$1
+    echo "Uploading results to S3 after \$phase test..."
+    aws s3 cp "\$BENCHMARK_LOG" "s3://\$S3_BUCKET/benchmark-\$phase.log" --region "\$AWS_REGION" || echo "S3 upload failed for \$phase"
+    aws s3 cp "\$BENCHMARK_LOG" "s3://\$S3_BUCKET/benchmark-latest.log" --region "\$AWS_REGION" || echo "S3 upload failed for latest"
+}
+
+# Export the function so it's available in the loadtest script
+export -f upload_to_s3
+export BENCHMARK_LOG
+export S3_BUCKET
+export AWS_REGION
+
 # Run load test and capture output to both console and log file
 {
 $load_test_script
 } 2>&1 | tee -a "\$BENCHMARK_LOG"
 
+# Final upload after all tests complete
+upload_to_s3 "final"
+
 echo 'Benchmark completed - instance will terminate'
 echo "Results saved to: \$BENCHMARK_LOG"
+echo "Results uploaded to: s3://\$S3_BUCKET/"
 EOF
 
 	local ac_user_data=$(gzip_base64_encode "$ac_user_script")
@@ -1258,6 +1407,7 @@ EOF
 		--user-data "${ac_user_data}" \
 		--subnet-id "$subnet_id" \
 		--security-group-ids "$SECURITY_GROUP_ID" \
+		--iam-instance-profile Name="$LOADTEST_INSTANCE_PROFILE_NAME" \
 		--tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=benchmark-load_test}]" \
 		--query 'Instances[0].InstanceId' \
 		--output text \
@@ -1366,17 +1516,26 @@ monitor_load_test() {
 
 		# Check for successful completion
 		if echo "$current_output" | grep -q "Benchmark completed"; then
-			echo "$all_output" | parse_console_output
-
-			# Save results to local file
+			# Download complete results from S3 (has full history, not truncated)
 			local results_dir="$PROJECT_ROOT/results"
 			mkdir -p "$results_dir"
 			local timestamp=$(date +%Y%m%d-%H%M%S)
 			local results_file="$results_dir/${FRAMEWORK}-${timestamp}.log"
-			echo "$all_output" | parse_console_output > "$results_file"
-			success "Benchmark results saved to: $results_file"
-			log "Full log saved to: $log_file"
 
+			log "Downloading complete results from S3..."
+			if aws s3 cp "s3://$S3_BUCKET_NAME/benchmark-final.log" "$results_file" \
+				--profile "$AWS_PROFILE" 2>/dev/null; then
+				success "Complete benchmark results downloaded from S3: $results_file"
+				log "File size: $(wc -c < "$results_file") bytes, $(wc -l < "$results_file") lines"
+			else
+				warning "Could not download from S3, using console output (may be truncated)"
+				echo "$all_output" | parse_console_output > "$results_file"
+			fi
+
+			# Display parsed results
+			cat "$results_file" | parse_console_output 2>/dev/null || cat "$results_file"
+
+			log "Full log saved to: $log_file"
 			success "Benchmark execution completed!"
 			return 0
 		fi
@@ -1450,6 +1609,8 @@ main() {
 	create_vpc_stack
 	create_cluster_iam_role
 	create_node_iam_role
+	create_s3_bucket
+	create_loadtest_iam_role
 	create_eks_cluster
 
 	KUBE_CONTEXT="$CLUSTER_NAME"
