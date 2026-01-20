@@ -259,10 +259,11 @@ class JsonDatabase {
 
     const allCards = await this.loadCollection<Card>('cards');
     const setCards = allCards.filter((c) => c.setId === set.id);
+    const total = setCards.length;
     const start = (page - 1) * limit;
     const cards = setCards.slice(start, start + limit);
 
-    return { ...set, cards, game };
+    return { ...set, cards, game, total, totalPages: Math.ceil(total / limit) };
   }
 
   async searchCards(params: CardSearchParams): Promise<PaginatedResponse<Card>> {
@@ -454,10 +455,11 @@ class JsonDatabase {
 
     const allListings = await this.loadCollection<Listing>('listings');
     const sellerListings = allListings.filter((l) => l.sellerId === seller.id);
+    const total = sellerListings.length;
     const start = (page - 1) * limit;
     const listings = sellerListings.slice(start, start + limit);
 
-    return { ...seller, listings };
+    return { ...seller, listings, total, totalPages: Math.ceil(total / limit) };
   }
 
   async getFeatured(): Promise<Featured | null> {

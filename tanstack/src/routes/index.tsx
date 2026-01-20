@@ -64,7 +64,7 @@ function HomePage() {
       <section>
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-2xl font-bold">Trending Cards</h2>
-          <Link to="/search" search={{ sort: 'trending' }} className="text-blue-600 hover:underline">
+          <Link to="/search" search={{ page: 1 }} className="text-blue-600 hover:underline">
             View All
           </Link>
         </div>
@@ -100,6 +100,7 @@ function HomePage() {
               key={set.id}
               to="/sets/$slug"
               params={{ slug: set.slug }}
+              search={{ page: 1 }}
               className="bg-white rounded-lg shadow p-4 hover:shadow-md transition"
             >
               <div className="aspect-video bg-gray-100 rounded mb-3 flex items-center justify-center">

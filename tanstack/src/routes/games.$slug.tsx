@@ -43,6 +43,7 @@ function GameDetailPage() {
             key={set.id}
             to="/sets/$slug"
             params={{ slug: set.slug }}
+            search={{ page: 1 }}
             className="bg-white rounded-lg shadow p-6 hover:shadow-md transition"
           >
             <div className="aspect-video bg-gray-100 rounded mb-4 flex items-center justify-center">

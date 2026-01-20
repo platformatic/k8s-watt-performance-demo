@@ -26,7 +26,7 @@ export interface CardAttributes {
   attack?: string;
   defense?: string;
   level?: number;
-  [key: string]: unknown;
+  [key: string]: string | number | string[] | undefined;
 }
 
 export interface Card {
@@ -96,6 +96,7 @@ export interface PaginatedResponse<T> {
   totalPages: number;
 }
 
+// API Query Parameters
 export interface CardSearchParams {
   game?: string;
   set?: string;
@@ -119,6 +120,7 @@ export interface ListingSearchParams {
   limit?: number;
 }
 
+// Extended types for API responses
 export interface CardWithListings extends Card {
   listings: Listing[];
   lowestPrice?: number;
@@ -132,10 +134,14 @@ export interface GameWithSets extends Game {
 export interface SetWithCards extends CardSet {
   cards: Card[];
   game: Game;
+  total: number;
+  totalPages: number;
 }
 
 export interface SellerWithListings extends Seller {
   listings: Listing[];
+  total: number;
+  totalPages: number;
 }
 
 export interface ListingWithDetails extends Listing {

@@ -5,7 +5,7 @@ export const Route = createFileRoute('/sets/$slug')({
   validateSearch: (search: Record<string, unknown>) => ({
     page: Number(search?.page) || 1,
   }),
-  loader: async ({ params, deps }) => {
+  loader: async ({ params, deps }: { params: { slug: string }; deps: { page: number } }) => {
     const page = deps?.page || 1
     const set = await db.getSetWithCards(params.slug, page, 24)
     if (!set) {
