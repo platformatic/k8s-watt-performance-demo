@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This is a Kubernetes-based benchmarking framework for running Platformatic Watt performance tests on Amazon EKS (Elastic Kubernetes Service). The benchmark compares application performance when running with Node.js, PM2, and Platformatic Watt across different frameworks (Next.js, React Router).
+This is a Kubernetes-based benchmarking framework for running Platformatic Watt performance tests on Amazon EKS (Elastic Kubernetes Service). The benchmark compares application performance when running with Node.js, PM2, and Platformatic Watt across different frameworks (Next.js, React Router, TanStack).
 
 ## Architecture
 
@@ -14,6 +14,7 @@ The repository follows a multi-framework architecture:
 2. **Framework Applications** - Each framework has its own directory:
    - `next/` - Next.js application
    - `react-router/` - React Router application
+   - `tanstack/` - TanStack Start application
 3. **EKS Orchestration** (`benchmark.sh`) - Main benchmarking script that creates AWS infrastructure, deploys to EKS, runs load tests, and cleans up
 
 ### Key Design Decisions
@@ -71,6 +72,9 @@ AWS_PROFILE=<profile-name> ./benchmark.sh
 
 # Benchmark React Router
 AWS_PROFILE=<profile-name> FRAMEWORK=react-router ./benchmark.sh
+
+# Benchmark TanStack
+AWS_PROFILE=<profile-name> FRAMEWORK=tanstack ./benchmark.sh
 ```
 
 The script will:
@@ -87,7 +91,7 @@ Required:
 - `AWS_PROFILE` - AWS CLI profile to use
 
 Optional (with defaults):
-- `FRAMEWORK` - Framework to benchmark (default: `next`, options: `next`, `react-router`)
+- `FRAMEWORK` - Framework to benchmark (default: `next`, options: `next`, `react-router`, `tanstack`)
 - `CLUSTER_NAME` - EKS cluster name (default: `watt-benchmark-<timestamp>`)
 - `NODE_TYPE` - EC2 instance type for EKS nodes (default: `m5.2xlarge`)
 - `NODE_COUNT` - Number of worker nodes (default: `4`)
@@ -98,7 +102,7 @@ Optional (with defaults):
 
 ## Framework Application Structure
 
-Each framework directory (`next/`, `react-router/`) contains:
+Each framework directory (`next/`, `react-router/`, `tanstack/`) contains:
 
 ### Common Files
 - `Dockerfile` - Docker image build configuration
