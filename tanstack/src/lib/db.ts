@@ -58,8 +58,8 @@ class JsonDatabase {
     const candidates = [
       path.join(process.cwd(), 'data'),
       path.join(process.cwd(), '..', 'data'),
-      path.join(__dirname, '..', 'data'),
-      path.join(__dirname, 'data'),
+      path.join(import.meta.dirname, '..', 'data'),
+      path.join(import.meta.dirname, 'data'),
     ];
 
     for (const dir of candidates) {
