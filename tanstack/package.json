@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build",
+    "build": "NODE_ENV=production vite build",
     "build:watt": "NODE_ENV=production wattpm build",
     "start": "node .output/server/index.mjs",
     "start:node": "NODE_ENV=production node .output/server/index.mjs",
