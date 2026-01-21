@@ -21,7 +21,9 @@ echo "URL_WATT: $URL_WATT"
 echo ""
 echo "Test Parameters:"
 echo "  - Initial NLB warm-up: 60s per endpoint (10->500 req/s ramp)"
+echo "  - Rest after warmup: 60s"
 echo "  - Pre-test warm-up: 20s per endpoint (50->400 req/s ramp)"
+echo "  - Test ramp-up: 60s (100->1000->3000->5000 req/s)"
 echo "  - Test duration: 120s per service @ 5000 req/s"
 echo "  - Cooldown: 480s between tests"
 echo "========================================================================"
@@ -140,8 +142,8 @@ warmup_all_endpoints() {
   echo "========================================================================"
   echo "NLB WARM-UP COMPLETE"
   echo "========================================================================"
-  echo "All endpoints warmed up. Starting benchmark tests in 30s..."
-  sleep 30
+  echo "All endpoints warmed up. Resting for 60s before benchmark tests..."
+  sleep 60
 }
 
 # Short k6 script for quick pre-test warm-up (after cooldown)
@@ -195,13 +197,18 @@ const responseTime = new Trend('response_time_ms');
 export const options = {
   throw: true,
   scenarios: {
-    constant_arrival_rate: {
-      executor: 'constant-arrival-rate',
-      duration: '120s',
-      rate: 5000,
+    ramping_load: {
+      executor: 'ramping-arrival-rate',
+      startRate: 100,
       timeUnit: '1s',
       preAllocatedVUs: 500,
       maxVUs: 10000,
+      stages: [
+        { duration: '20s', target: 1000 },   // Ramp to 1000 req/s
+        { duration: '20s', target: 3000 },   // Ramp to 3000 req/s
+        { duration: '20s', target: 5000 },   // Ramp to 5000 req/s
+        { duration: '120s', target: 5000 },  // Hold at 5000 req/s for 2 minutes
+      ],
     },
   },
   // More detailed summary output

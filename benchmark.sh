@@ -382,13 +382,16 @@ setup_aws_info() {
 ecr_login() {
 	log "Logging in to ECR..."
 
-	aws ecr get-login-password \
+	if ! aws ecr get-login-password \
 		--profile "$AWS_PROFILE" \
 		--region "$AWS_REGION" | \
 	docker login \
 		--username AWS \
 		--password-stdin \
-		"${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >/dev/null 2>&1
+		"${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"; then
+		error "ECR login failed"
+		return 1
+	fi
 
 	success "ECR login successful"
 }
@@ -400,14 +403,18 @@ create_ecr_repository() {
 		--repository-names "$ECR_REPO_NAME" \
 		--profile "$AWS_PROFILE" >/dev/null 2>&1; then
 		log "Repository already exists"
+		ECR_REPO_CREATED="true"
 		return 0
 	fi
 
-	aws ecr create-repository \
+	if ! aws ecr create-repository \
 		--repository-name "$ECR_REPO_NAME" \
 		--profile "$AWS_PROFILE" \
 		--image-scanning-configuration scanOnPush=false \
-		>/dev/null
+		>/dev/null; then
+		error "Failed to create ECR repository"
+		return 1
+	fi
 
 	ECR_REPO_CREATED="true"
 	success "ECR repository created"
@@ -418,18 +425,34 @@ build_and_push_image() {
 	log "Building framework: $FRAMEWORK"
 	log "This may take a few minutes..."
 
-	docker build \
+	if ! docker build \
 		--platform linux/amd64 \
 		--build-arg COMMIT_HASH="$(git rev-parse HEAD 2>/dev/null || echo 'unknown')" \
 		--build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		-t "$ECR_IMAGE_URI" \
-		"$FRAMEWORK_SOURCE_DIR"
+		"$FRAMEWORK_SOURCE_DIR"; then
+		error "Docker build failed"
+		return 1
+	fi
 
 	log "Pushing image to ECR..."
 
-	docker push "$ECR_IMAGE_URI"
+	if ! docker push "$ECR_IMAGE_URI"; then
+		error "Docker push failed"
+		return 1
+	fi
 
-	success "Image pushed: $ECR_IMAGE_URI"
+	# Verify image exists in ECR
+	log "Verifying image in ECR..."
+	if ! aws ecr describe-images \
+		--repository-name "$ECR_REPO_NAME" \
+		--image-ids imageTag="$IMAGE_TAG" \
+		--profile "$AWS_PROFILE" >/dev/null 2>&1; then
+		error "Image verification failed - image not found in ECR"
+		return 1
+	fi
+
+	success "Image pushed and verified: $ECR_IMAGE_URI"
 }
 
 create_security_group_for_load_test() {
