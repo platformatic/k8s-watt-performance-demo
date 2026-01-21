@@ -3,6 +3,10 @@ import express from "express";
 import pino from "pino";
 import pinoHttp from "pino-http";
 import { createRequestHandler } from "@react-router/express";
+import { db } from "./app/lib/db.ts";
+
+// Pre-initialize database to avoid file reads during request handling
+await db.initialize();
 
 // Short-circuit the type-checking of the built output.
 const BUILD_PATH = "./build/server/index.js";
