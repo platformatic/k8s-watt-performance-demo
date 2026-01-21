@@ -22,7 +22,8 @@ echo ""
 echo "Test Parameters:"
 echo "  - Initial NLB warm-up: 60s per endpoint (10->500 req/s ramp)"
 echo "  - Pre-test warm-up: 20s per endpoint (50->400 req/s ramp)"
-echo "  - Test duration: 120s per service @ 1000 req/s mixed scenarios"
+echo "  - Post-warmup wait: 60s before main test"
+echo "  - Test duration: 60s ramp-up (0->1000 req/s) + 120s @ 1000 req/s"
 echo "  - Cooldown: 480s between tests"
 echo "  - Scenarios: Homepage, Search, Card Detail, Game Browse, Sellers"
 echo "========================================================================"
@@ -125,12 +126,15 @@ const SET_SLUGS = ['scarlet-violet', 'paldea-evolved', 'murders-at-karlov-manor'
 export const options = {
   scenarios: {
     mixed_load: {
-      executor: 'constant-arrival-rate',
-      rate: 1000,
+      executor: 'ramping-arrival-rate',
+      startRate: 0,
       timeUnit: '1s',
-      duration: '120s',
       preAllocatedVUs: 2000,
       maxVUs: 20000,
+      stages: [
+        { duration: '60s', target: 1000 },  // Ramp up over 60s
+        { duration: '120s', target: 1000 }, // Constant at 1000 req/s for 120s
+      ],
     },
   },
 };
@@ -250,11 +254,15 @@ run_ecommerce_test() {
   echo "========================================================================"
   echo "E-COMMERCE LOAD TEST: $name"
   echo "Target: $url"
-  echo "Duration: 120s @ 1000 req/s (mixed scenarios)"
+  echo "Duration: 60s ramp-up + 120s @ 1000 req/s (mixed scenarios)"
   echo "========================================================================"
 
   # Pre-test warm-up
   run_pre_test_warmup "$name" "$url"
+
+  echo ""
+  echo "Waiting 60s before main load test..."
+  sleep 60
 
   echo ""
   echo "Starting main load test..."
