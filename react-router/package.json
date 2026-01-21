@@ -5,11 +5,11 @@
   "scripts": {
     "build": "NODE_ENV=production wattpm build",
     "dev": "wattpm dev",
-    "start": "wattpm start",
+    "start": "NODE_ENV=production wattpm start",
     "start:node": "NODE_ENV=production node ./server.js",
     "start:flame": "NODE_ENV=production LOG_LEVEL=error ./node_modules/.bin/flame run ./server.js",
-    "start:watt": "wattpm start",
-    "start:pm2r": "pm2 start ecosystem.config.cjs && pm2 monitor",
+    "start:watt": "NODE_ENV=production wattpm start",
+    "start:pm2r": "NODE_ENV=production pm2 start ecosystem.config.cjs && pm2 monitor",
     "typecheck": "react-router typegen && tsc"
   },
   "dependencies": {
