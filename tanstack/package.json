@@ -6,10 +6,10 @@
     "dev": "vite dev",
     "build": "NODE_ENV=production vite build",
     "build:watt": "NODE_ENV=production wattpm build",
-    "start": "node .output/server/index.mjs",
+    "start": "NODE_ENV=production node .output/server/index.mjs",
     "start:node": "NODE_ENV=production node .output/server/index.mjs",
-    "start:watt": "wattpm start",
-    "start:pm2r": "pm2 start ecosystem.config.cjs && pm2 monitor",
+    "start:watt": "NODE_ENV=production wattpm start",
+    "start:pm2r": "NODE_ENV=production pm2 start ecosystem.config.cjs && pm2 monitor",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
