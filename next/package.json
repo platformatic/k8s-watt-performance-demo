@@ -2,7 +2,7 @@
   "name": "next",
   "scripts": {
     "dev": "next dev",
-    "build": "next build && echo '[]' > .next/dynamic-css-manifest && echo '{}' > .next/server/subresource-integrity-manifest.json",
+    "build": "NODE_ENV=production next build && echo '[]' > .next/dynamic-css-manifest && echo '{}' > .next/server/subresource-integrity-manifest.json",
     "start": "next start",
     "start:node": "next start",
     "start:watt": "wattpm start",
