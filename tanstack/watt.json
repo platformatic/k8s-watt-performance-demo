@@ -25,7 +25,7 @@
       "maxHeapTotal": "2GB",
       "maxYoungGeneration": "256MB"
     },
-    "managementApi": false,
+    "managementApi": "{PLT_MANAGEMENT_API}",
     "gracefulShutdown": {
       "runtime": 1000,
       "application": 1000
