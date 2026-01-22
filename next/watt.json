@@ -20,7 +20,7 @@
       "maxHeapTotal": "2GB",
       "maxYoungGeneration": "256MB"
     },
-    "managementApi": false,
+    "managementApi": "{PLT_MANAGEMENT_API}",
     "workers": {
       "static": "{WORKERS}"
     }
