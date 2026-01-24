@@ -177,6 +177,8 @@ spec:
               value: "true"
             - name: BACKLOG
               value: "1024"
+            - name: UV_THREADPOOL_SIZE
+              value: "128"
           ports:
             - name: 'app'
               containerPort: 3000

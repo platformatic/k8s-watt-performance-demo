@@ -2,7 +2,8 @@ import { createFileRoute } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 
 const getServerInfo = createServerFn().handler(async () => {
-  return { pid: process.pid }
+  const { threadId } = await import('worker_threads')
+  return { pid: process.pid, threadId }
 })
 
 export const Route = createFileRoute('/')({
@@ -11,7 +12,7 @@ export const Route = createFileRoute('/')({
 })
 
 function Home() {
-  const { pid } = Route.useLoaderData()
+  const { pid, threadId } = Route.useLoaderData()
   return (
     <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
       <main className="flex flex-col gap-8 row-start-2 items-center">
@@ -21,6 +22,7 @@ function Home() {
         </p>
         <div className="mt-8 p-4 bg-gray-100 rounded-lg">
           <p className="text-sm text-gray-500">Process ID: <span className="font-mono font-bold">{pid}</span></p>
+          <p className="text-sm text-gray-500">Thread ID: <span className="font-mono font-bold">{threadId}</span></p>
         </div>
       </main>
     </div>

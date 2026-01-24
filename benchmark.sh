@@ -1298,11 +1298,31 @@ parse_console_output() {
 		tail -1 |
 		cut -d: -f1)
 
-	local end_line=$(tail -n +$start_line "$temp_file" |
+	# If start_line is empty, output the whole file (filtered)
+	if [[ -z "$start_line" ]]; then
+		sed -E 's/^\[[^]]+\] cloud-init\[[0-9]+\]: //' "$temp_file" |
+			grep -v '^+ ' |
+			grep -Ev 'docker run|entered blocking|entered disabled|entered promiscuous|left promiscuous|renamed from|link becomes ready|entered forwarding'
+		rm -f "$temp_file"
+		return
+	fi
+
+	local end_line=$(tail -n +"$start_line" "$temp_file" |
 		grep -n "Benchmark completed" |
 		grep -v '+ echo' |
 		head -1 |
 		cut -d: -f1)
+
+	# If end_line is empty, output from start_line to end of file
+	if [[ -z "$end_line" ]]; then
+		sed -n "${start_line},\$p" "$temp_file" |
+			sed -E 's/^\[[^]]+\] cloud-init\[[0-9]+\]: //' |
+			grep -v '^+ ' |
+			grep -Ev 'docker run|entered blocking|entered disabled|entered promiscuous|left promiscuous|renamed from|link becomes ready|entered forwarding'
+		rm -f "$temp_file"
+		return
+	fi
+
 	end_line=$((start_line + end_line - 1))
 
 	sed -n "${start_line},${end_line}p" "$temp_file" |
