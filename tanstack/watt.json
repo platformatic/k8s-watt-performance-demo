@@ -1,5 +1,5 @@
 {
-  "$schema": "https://schemas.platformatic.dev/@platformatic/tanstack/3.32.0-alpha.0.json",
+  "$schema": "https://schemas.platformatic.dev/@platformatic/tanstack/3.32.0.json",
   "application": {
     "outputDirectory": ".output"
   },
@@ -23,9 +23,7 @@
       "interval": 5000,
       "maxUnhealthyChecks": 5,
       "maxHeapTotal": "2GB",
-      "maxYoungGeneration": "256MB",
-      "noHeapCheck": true,
-      "codeRangeSize": "512MB"
+      "maxYoungGeneration": "128MB"
     },
     "managementApi": false,
     "gracefulShutdown": {

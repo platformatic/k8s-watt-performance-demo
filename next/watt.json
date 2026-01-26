@@ -1,5 +1,5 @@
 {
-  "$schema": "https://schemas.platformatic.dev/@platformatic/next/3.23.0.json",
+  "$schema": "https://schemas.platformatic.dev/@platformatic/next/3.32.0.json",
   "runtime": {
     "logger": {
       "level": "{PLT_SERVER_LOGGER_LEVEL}"
