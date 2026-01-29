@@ -148,6 +148,10 @@ The `loadtest.sh` script runs k6 load tests sequentially against all three servi
 - Tests run on separate EC2 instance within same VPC
 - Uses LoadBalancer URLs passed via `URL_NODE`, `URL_PM2`, `URL_WATT` environment variables
 
+## CI/CD
+
+GitHub Actions (`.github/workflows/main.yml`) automatically builds and pushes the Docker image to `platformatic/k8s-watt-performance-demo-next` on Docker Hub when changes are pushed to `demo/` on the `main` branch. Images are built for both `linux/amd64` and `linux/arm64` platforms.
+
 ## Common Functions (lib/common.sh)
 
 Shared utilities used by benchmark script:

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://schemas.platformatic.dev/@platformatic/tanstack/3.29.1.json",
+  "$schema": "https://schemas.platformatic.dev/@platformatic/tanstack/3.32.0.json",
   "application": {
     "outputDirectory": ".output"
   },
