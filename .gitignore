@@ -5,3 +5,16 @@ dist/
 .tanstack/
 results/
 *.log
+
+# Build artifacts
+.next/
+build/
+out/
+
+# Profile data
+*.pb
+*.profile
+
+# Claude/dev tooling
+.claude/
+.githuman/
