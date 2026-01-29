@@ -2,22 +2,29 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: next
+  name: tanstack
   labels:
-    app.kubernetes.io/instance: next
+    app.kubernetes.io/instance: tanstack
 spec:
   replicas: 6
   selector:
     matchLabels:
-      app.kubernetes.io/instance: next
+      app.kubernetes.io/instance: tanstack
   template:
     metadata:
       labels:
-        app.kubernetes.io/instance: next
+        app.kubernetes.io/instance: tanstack
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: tanstack
       containers:
         - name: demo-application
-          image: platformatic/k8s-watt-performance-demo-next:latest
+          image: IMAGE_PLACEHOLDER
           imagePullPolicy: Always
           env:
             - name: SCRIPT_NAME
@@ -64,22 +71,29 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: next-pm2
+  name: tanstack-pm2
   labels:
-    app.kubernetes.io/instance: next-pm2
+    app.kubernetes.io/instance: tanstack-pm2
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app.kubernetes.io/instance: next-pm2
+      app.kubernetes.io/instance: tanstack-pm2
   template:
     metadata:
       labels:
-        app.kubernetes.io/instance: next-pm2
+        app.kubernetes.io/instance: tanstack-pm2
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: tanstack-pm2
       containers:
         - name: demo-application
-          image: platformatic/k8s-watt-performance-demo-next:latest
+          image: IMAGE_PLACEHOLDER
           imagePullPolicy: Always
           env:
             - name: SCRIPT_NAME
@@ -128,22 +142,29 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: next-watt
+  name: tanstack-watt
   labels:
-    app.kubernetes.io/instance: next-watt
+    app.kubernetes.io/instance: tanstack-watt
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app.kubernetes.io/instance: next-watt
+      app.kubernetes.io/instance: tanstack-watt
   template:
     metadata:
       labels:
-        app.kubernetes.io/instance: next-watt
+        app.kubernetes.io/instance: tanstack-watt
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: tanstack-watt
       containers:
         - name: demo-application
-          image: platformatic/k8s-watt-performance-demo-next:latest
+          image: IMAGE_PLACEHOLDER
           imagePullPolicy: Always
           env:
             - name: SCRIPT_NAME
@@ -156,6 +177,8 @@ spec:
               value: "true"
             - name: BACKLOG
               value: "1024"
+            - name: UV_THREADPOOL_SIZE
+              value: "128"
           ports:
             - name: 'app'
               containerPort: 3000
@@ -201,63 +224,65 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: next-watt
+  name: tanstack-watt
   labels:
-    app.kubernetes.io/instance: next-watt
+    app.kubernetes.io/instance: tanstack-watt
   annotations:
     benchmark.platformatic.dev/expose: "true"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
 spec:
-  type: NodePort
+  type: LoadBalancer
   selector:
-    app.kubernetes.io/instance: next-watt
+    app.kubernetes.io/instance: tanstack-watt
   ports:
     - name: app
       protocol: 'TCP'
       port: 80
       targetPort: 'app'
-      nodePort: 30002
     - name: 'metrics'
       protocol: 'TCP'
       port: 9090
       targetPort: 'metrics'
-      nodePort: 30090
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: next-pm2
+  name: tanstack-pm2
   labels:
-    app.kubernetes.io/instance: next-pm2
+    app.kubernetes.io/instance: tanstack-pm2
   annotations:
     benchmark.platformatic.dev/expose: "true"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
 spec:
-  type: NodePort
+  type: LoadBalancer
   selector:
-    app.kubernetes.io/instance: next-pm2
+    app.kubernetes.io/instance: tanstack-pm2
   ports:
     - name: app
       protocol: 'TCP'
       port: 80
       targetPort: 'app'
-      nodePort: 30001
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: next
+  name: tanstack
   labels:
-    app.kubernetes.io/instance: next
+    app.kubernetes.io/instance: tanstack
   annotations:
     benchmark.platformatic.dev/expose: "true"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
 spec:
-  type: NodePort
+  type: LoadBalancer
   selector:
-    app.kubernetes.io/instance: next
+    app.kubernetes.io/instance: tanstack
   ports:
     - name: app
       protocol: 'TCP'
       port: 80
       targetPort: 'app'
-      nodePort: 30000
