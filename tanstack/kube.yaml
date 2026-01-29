@@ -1,0 +1,288 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tanstack
+  labels:
+    app.kubernetes.io/instance: tanstack
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: tanstack
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: tanstack
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: tanstack
+      containers:
+        - name: demo-application
+          image: IMAGE_PLACEHOLDER
+          imagePullPolicy: Always
+          env:
+            - name: SCRIPT_NAME
+              value: "start:node"
+          ports:
+            - name: 'app'
+              containerPort: 3000
+              protocol: 'TCP'
+          readinessProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            periodSeconds: 2
+            successThreshold: 1
+            timeoutSeconds: 1
+            failureThreshold: 5
+          startupProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            initialDelaySeconds: 10
+            periodSeconds: 3
+            successThreshold: 1
+            failureThreshold: 15
+          resources:
+            requests:
+              memory: '2Gi'
+              cpu: '1000m'
+            limits:
+              memory: '2Gi'
+              cpu: '1000m'
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tanstack-pm2
+  labels:
+    app.kubernetes.io/instance: tanstack-pm2
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: tanstack-pm2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: tanstack-pm2
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: tanstack-pm2
+      containers:
+        - name: demo-application
+          image: IMAGE_PLACEHOLDER
+          imagePullPolicy: Always
+          env:
+            - name: SCRIPT_NAME
+              value: "start:pm2r"
+            - name: WORKERS
+              value: "2"
+          ports:
+            - name: 'app'
+              containerPort: 3000
+              protocol: 'TCP'
+          readinessProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            periodSeconds: 2
+            successThreshold: 1
+            timeoutSeconds: 1
+            failureThreshold: 5
+          startupProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            initialDelaySeconds: 10
+            periodSeconds: 3
+            successThreshold: 1
+            failureThreshold: 15
+          resources:
+            requests:
+              memory: '4Gi'
+              cpu: '2000m'
+            limits:
+              memory: '4Gi'
+              cpu: '2000m'
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tanstack-watt
+  labels:
+    app.kubernetes.io/instance: tanstack-watt
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: tanstack-watt
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: tanstack-watt
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: tanstack-watt
+      containers:
+        - name: demo-application
+          image: IMAGE_PLACEHOLDER
+          imagePullPolicy: Always
+          env:
+            - name: SCRIPT_NAME
+              value: "start:watt"
+            - name: WORKERS
+              value: "2"
+            - name: PLT_SERVER_METRICS
+              value: "false"
+            - name: PLT_SERVER_HEALTH
+              value: "true"
+            - name: BACKLOG
+              value: "1024"
+            - name: UV_THREADPOOL_SIZE
+              value: "128"
+          ports:
+            - name: 'app'
+              containerPort: 3000
+              protocol: 'TCP'
+            - name: 'metrics'
+              containerPort: 9090
+              protocol: 'TCP'
+          readinessProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            periodSeconds: 2
+            successThreshold: 1
+            timeoutSeconds: 1
+            failureThreshold: 5
+          startupProbe:
+            httpGet:
+              path: '/'
+              port: 'app'
+              scheme: 'HTTP'
+            initialDelaySeconds: 10
+            periodSeconds: 3
+            successThreshold: 1
+            failureThreshold: 15
+          resources:
+            requests:
+              memory: '4Gi'
+              cpu: '2000m'
+            limits:
+              memory: '4Gi'
+              cpu: '2000m'
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tanstack-watt
+  labels:
+    app.kubernetes.io/instance: tanstack-watt
+  annotations:
+    benchmark.platformatic.dev/expose: "true"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/instance: tanstack-watt
+  ports:
+    - name: app
+      protocol: 'TCP'
+      port: 80
+      targetPort: 'app'
+    - name: 'metrics'
+      protocol: 'TCP'
+      port: 9090
+      targetPort: 'metrics'
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tanstack-pm2
+  labels:
+    app.kubernetes.io/instance: tanstack-pm2
+  annotations:
+    benchmark.platformatic.dev/expose: "true"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/instance: tanstack-pm2
+  ports:
+    - name: app
+      protocol: 'TCP'
+      port: 80
+      targetPort: 'app'
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tanstack
+  labels:
+    app.kubernetes.io/instance: tanstack
+  annotations:
+    benchmark.platformatic.dev/expose: "true"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/instance: tanstack
+  ports:
+    - name: app
+      protocol: 'TCP'
+      port: 80
+      targetPort: 'app'

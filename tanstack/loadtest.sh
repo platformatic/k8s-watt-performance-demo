@@ -21,8 +21,11 @@ echo "URL_WATT: $URL_WATT"
 echo ""
 echo "Test Parameters:"
 echo "  - Initial NLB warm-up: 60s per endpoint (10->500 req/s ramp)"
+echo "  - Rest after warmup: 60s"
 echo "  - Pre-test warm-up: 20s per endpoint (50->400 req/s ramp)"
-echo "  - Test duration: 120s per service @ 1000 req/s"
+echo "  - Test ramp-up: 80s (100->2000->5000->8000->10000 req/s)"
+echo "  - Test duration: 100s per service @ 10000 req/s"
+echo "  - Max VUs: 20000"
 echo "  - Cooldown: 480s between tests"
 echo "========================================================================"
 
@@ -140,8 +143,8 @@ warmup_all_endpoints() {
   echo "========================================================================"
   echo "NLB WARM-UP COMPLETE"
   echo "========================================================================"
-  echo "All endpoints warmed up. Starting benchmark tests in 30s..."
-  sleep 30
+  echo "All endpoints warmed up. Resting for 60s before benchmark tests..."
+  sleep 60
 }
 
 # Short k6 script for quick pre-test warm-up (after cooldown)
@@ -195,13 +198,19 @@ const responseTime = new Trend('response_time_ms');
 export const options = {
   throw: true,
   scenarios: {
-    constant_arrival_rate: {
-      executor: 'constant-arrival-rate',
-      duration: '120s',
-      rate: 1000,
+    ramping_load: {
+      executor: 'ramping-arrival-rate',
+      startRate: 100,
       timeUnit: '1s',
       preAllocatedVUs: 1000,
-      maxVUs: 20000,
+      maxVUs: 10000,
+      stages: [
+        { duration: '20s', target: 2000 },   // Ramp to 2000 req/s
+        { duration: '20s', target: 5000 },   // Ramp to 5000 req/s
+        { duration: '20s', target: 8000 },   // Ramp to 8000 req/s
+        { duration: '20s', target: 10000 },  // Ramp to 10000 req/s
+        { duration: '100s', target: 10000 }, // Hold at 10000 req/s
+      ],
     },
   },
   // More detailed summary output
@@ -350,9 +359,9 @@ echo "========================================================================"
 # Warm up all endpoints first to ensure NLB is ready
 warmup_all_endpoints
 
-# Test 1: PM2
-quick_warmup "PM2" "$URL_PM2/"
-run_k6_test "PM2 (2 workers)" "$URL_PM2/" 1
+# Test 1: Watt
+quick_warmup "Watt" "$URL_WATT/"
+run_k6_test "Watt (2 workers)" "$URL_WATT/" 1
 
 echo ""
 echo "========================================================================"
@@ -360,9 +369,9 @@ echo "COOLDOWN: 480 seconds before next test"
 echo "========================================================================"
 sleep 480
 
-# Test 2: Watt
-quick_warmup "Watt" "$URL_WATT/"
-run_k6_test "Watt (2 workers)" "$URL_WATT/" 2
+# Test 2: PM2
+quick_warmup "PM2" "$URL_PM2/"
+run_k6_test "PM2 (2 workers)" "$URL_PM2/" 2
 
 echo ""
 echo "========================================================================"

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schemas.platformatic.dev/@platformatic/tanstack/3.32.0.json",
+  "application": {
+    "outputDirectory": ".output"
+  },
+  "runtime": {
+    "logger": {
+      "level": "{LOG_LEVEL}"
+    },
+    "verticalScaler": {
+      "enabled": false
+    },
+    "server": {
+      "hostname": "{HOSTNAME}",
+      "port": "{PORT}",
+      "backlog": "{BACKLOG}"
+    },
+    "metrics": {
+      "enabled": false
+    },
+    "health": {
+      "enabled": false,
+      "interval": 5000,
+      "maxUnhealthyChecks": 5,
+      "maxHeapTotal": "2GB",
+      "maxYoungGeneration": "128MB"
+    },
+    "managementApi": false,
+    "gracefulShutdown": {
+      "runtime": 1000,
+      "application": 1000
+    },
+    "workers": {
+      "static": "{WORKERS}"
+    }
+  }
+}
