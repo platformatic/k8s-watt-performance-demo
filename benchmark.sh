@@ -9,6 +9,7 @@ export AWS_PAGER=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR" && pwd)"
 source "$PROJECT_ROOT/lib/common.sh"
+source "$PROJECT_ROOT/lib/state.sh"
 
 CLUSTER_NAME="${CLUSTER_NAME:-watt-benchmark-$(date +%s)}"
 AWS_PROFILE="${AWS_PROFILE}"
@@ -54,6 +55,7 @@ cleanup_instances() {
 		aws ec2 wait instance-terminated \
 			--instance-ids "$LOAD_TEST_INSTANCE_ID" \
 			--profile "$AWS_PROFILE" 2>/dev/null || true
+		mark_resource_cleaned "ec2" "load_test_instance_id"
 	fi
 
 	# Delete EKS node group
@@ -77,6 +79,7 @@ cleanup_instances() {
 				--cluster-name "$CLUSTER_NAME" \
 				--nodegroup-name "$nodegroup_name" \
 				--profile "$AWS_PROFILE" 2>&1 | grep -v "waiting" || true
+			mark_resource_cleaned "eks" "nodegroup_name"
 		fi
 	fi
 
@@ -129,6 +132,7 @@ cleanup_instances() {
 			if aws ec2 delete-security-group \
 				--group-id "$SECURITY_GROUP_ID" \
 				--profile "$AWS_PROFILE" 2>/dev/null; then
+				mark_resource_cleaned "ec2" "security_group_id"
 				break
 			fi
 			sg_retry=$((sg_retry + 1))
@@ -176,6 +180,7 @@ cleanup_instances() {
 			aws ec2 delete-internet-gateway \
 				--internet-gateway-id "$IGW_ID" \
 				--profile "$AWS_PROFILE" 2>/dev/null || true
+			mark_resource_cleaned "vpc" "igw_id"
 		fi
 
 		# Also check for any IGWs attached to VPC (in case IGW_ID wasn't set)
@@ -208,6 +213,7 @@ cleanup_instances() {
 				--subnet-id "$subnet" \
 				--profile "$AWS_PROFILE" 2>/dev/null || true
 		done
+		mark_resource_cleaned "vpc" "subnet_ids"
 
 		# Delete all non-main route tables
 		log "Deleting route tables..."
@@ -222,6 +228,7 @@ cleanup_instances() {
 				--route-table-id "$rt" \
 				--profile "$AWS_PROFILE" 2>/dev/null || true
 		done
+		mark_resource_cleaned "vpc" "rtb_id"
 
 		# Delete VPC with retry
 		log "Deleting VPC: $VPC_ID"
@@ -231,6 +238,7 @@ cleanup_instances() {
 				--vpc-id "$VPC_ID" \
 				--profile "$AWS_PROFILE" 2>/dev/null; then
 				log "VPC deleted successfully"
+				mark_resource_cleaned "vpc" "vpc_id"
 				break
 			fi
 			vpc_retry=$((vpc_retry + 1))
@@ -257,6 +265,7 @@ cleanup_instances() {
 		aws iam delete-role \
 			--role-name "$NODE_ROLE_NAME" \
 			--profile "$AWS_PROFILE" 2>/dev/null || true
+		mark_resource_cleaned "iam" "node_role_name"
 	fi
 
 	if [[ -n "$CLUSTER_ROLE_NAME" ]]; then
@@ -268,6 +277,7 @@ cleanup_instances() {
 		aws iam delete-role \
 			--role-name "$CLUSTER_ROLE_NAME" \
 			--profile "$AWS_PROFILE" 2>/dev/null || true
+		mark_resource_cleaned "iam" "cluster_role_name"
 	fi
 
 	# Delete ECR repository
@@ -277,6 +287,8 @@ cleanup_instances() {
 			--repository-name "$ECR_REPO_NAME" \
 			--force \
 			--profile "$AWS_PROFILE" 2>/dev/null || true
+		mark_resource_cleaned "ecr" "repo_name"
+		mark_resource_cleaned "ecr" "repo_created"
 	fi
 
 	# Delete load test instance profile and role
@@ -289,6 +301,7 @@ cleanup_instances() {
 		aws iam delete-instance-profile \
 			--instance-profile-name "$LOADTEST_INSTANCE_PROFILE_NAME" \
 			--profile "$AWS_PROFILE" 2>/dev/null || true
+		mark_resource_cleaned "iam" "loadtest_instance_profile_name"
 	fi
 
 	if [[ -n "$LOADTEST_ROLE_NAME" ]]; then
@@ -300,6 +313,7 @@ cleanup_instances() {
 		aws iam delete-role \
 			--role-name "$LOADTEST_ROLE_NAME" \
 			--profile "$AWS_PROFILE" 2>/dev/null || true
+		mark_resource_cleaned "iam" "loadtest_role_name"
 	fi
 
 	# Delete S3 bucket (must empty first)
@@ -309,10 +323,29 @@ cleanup_instances() {
 			--profile "$AWS_PROFILE" 2>/dev/null || true
 		aws s3 rb "s3://$S3_BUCKET_NAME" \
 			--profile "$AWS_PROFILE" 2>/dev/null || true
+		mark_resource_cleaned "s3" "bucket_name"
 	fi
 }
 
-trap generic_cleanup EXIT INT TERM
+# Trap handler that updates state and cleans up resources
+cleanup_with_state() {
+	update_state_status "cleaning"
+	generic_cleanup
+
+	# Delete state file if all resources were cleaned successfully
+	local state_file=$(get_current_state_file)
+	if [[ -n "$state_file" && -f "$state_file" ]]; then
+		if ! state_has_resources "$state_file"; then
+			delete_state_file "$state_file"
+		else
+			update_state_status "failed"
+			warning "Some resources may not have been cleaned. State file retained: $state_file"
+			warning "Run './cleanup.sh --file $state_file' to retry cleanup"
+		fi
+	fi
+}
+
+trap cleanup_with_state EXIT INT TERM
 
 # OS-specific base64 encoding without line wraps
 base64_encode() {
@@ -1644,16 +1677,39 @@ main() {
 		exit 1
 	fi
 
+	# Initialize state persistence
+	init_state_dir "$PROJECT_ROOT"
+	create_state_file "$CLUSTER_NAME" "$AWS_PROFILE" "$AWS_REGION"
+	update_state_status "running"
+
 	ecr_login
 	create_ecr_repository
+	save_resource "ecr" "repo_name" "$ECR_REPO_NAME"
+	save_resource "ecr" "repo_created" "$ECR_REPO_CREATED"
 	build_and_push_image
 
 	# Create infrastructure
 	create_vpc_stack
+	save_resource "vpc" "vpc_id" "$VPC_ID"
+	save_resource "vpc" "igw_id" "$IGW_ID"
+	save_resource "vpc" "rtb_id" "$RTB_ID"
+	# Save subnet IDs as array
+	IFS=',' read -ra subnet_array <<< "$SUBNET_IDS"
+	save_resource_array "vpc" "subnet_ids" "${subnet_array[@]}"
+
 	create_cluster_iam_role
+	save_resource "iam" "cluster_role_name" "$CLUSTER_ROLE_NAME"
+
 	create_node_iam_role
+	save_resource "iam" "node_role_name" "$NODE_ROLE_NAME"
+
 	create_s3_bucket
+	save_resource "s3" "bucket_name" "$S3_BUCKET_NAME"
+
 	create_loadtest_iam_role
+	save_resource "iam" "loadtest_role_name" "$LOADTEST_ROLE_NAME"
+	save_resource "iam" "loadtest_instance_profile_name" "$LOADTEST_INSTANCE_PROFILE_NAME"
+
 	create_eks_cluster
 
 	KUBE_CONTEXT="$CLUSTER_NAME"
@@ -1664,6 +1720,7 @@ main() {
 		--alias "$KUBE_CONTEXT"
 
 	create_nodegroup
+	save_resource "eks" "nodegroup_name" "${CLUSTER_NAME}-nodegroup"
 	wait_for_nodes
 
 	apply_framework_manifests
@@ -1695,6 +1752,7 @@ main() {
 	health_check_endpoints "$url_node" "$url_pm2" "$url_watt"
 
 	create_security_group_for_load_test
+	save_resource "ec2" "security_group_id" "$SECURITY_GROUP_ID"
 
 	log ""
 	log "########################################################################"
@@ -1703,6 +1761,7 @@ main() {
 	log "########################################################################"
 
 	launch_load_test_instance "$url_node" "$url_pm2" "$url_watt"
+	save_resource "ec2" "load_test_instance_id" "$LOAD_TEST_INSTANCE_ID"
 
 	log "Waiting for load_test instance to be running..."
 	aws ec2 wait instance-running \

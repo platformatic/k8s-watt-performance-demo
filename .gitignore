@@ -20,3 +20,6 @@ out/
 # Claude/dev tooling
 .claude/
 .githuman/
+
+# Benchmark state (cleanup recovery)
+.benchmark-state/
