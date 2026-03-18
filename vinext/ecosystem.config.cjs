@@ -6,7 +6,8 @@ module.exports = {
     exec_mode: "cluster",
     instances: process.env.WORKERS || 2,
     env: {
-      ...process.env
+      ...process.env,
+      DATA_DIR: process.env.DATA_DIR || '../next/data'
     }
   }]
 }

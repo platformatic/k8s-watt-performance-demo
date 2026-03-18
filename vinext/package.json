@@ -1,10 +1,10 @@
 {
   "name": "watt-vinext",
   "scripts": {
-    "dev": "vinext dev --port 3001",
-    "build": "vinext build",
-    "start": "vinext start --port 3001",
-    "start:node": "vinext start --port 3001",
+    "dev": "DATA_DIR=../next/data vinext dev --port 3001",
+    "build": "DATA_DIR=../next/data vinext build",
+    "start": "DATA_DIR=../next/data vinext start --port 3001",
+    "start:node": "DATA_DIR=../next/data vinext start --port 3001",
     "start:pm2r": "NODE_ENV=production pm2 start ecosystem.config.cjs && pm2 monitor"
   },
   "dependencies": {

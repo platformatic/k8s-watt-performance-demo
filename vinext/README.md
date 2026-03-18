@@ -11,7 +11,8 @@ npm run build
 npm run start
 ```
 
-The app serves on port `3001` by default.
+The app serves on port `3001` by default and reuses the source data from
+`../next/data` instead of duplicating the JSON fixtures.
 
 # Next.js with Watt
 
