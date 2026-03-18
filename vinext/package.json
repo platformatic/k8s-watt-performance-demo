@@ -1,0 +1,41 @@
+{
+  "name": "watt-vinext",
+  "scripts": {
+    "dev": "vinext dev --port 3001",
+    "build": "vinext build",
+    "start": "vinext start --port 3001",
+    "start:node": "vinext start --port 3001",
+    "start:pm2r": "NODE_ENV=production pm2 start ecosystem.config.cjs && pm2 monitor"
+  },
+  "dependencies": {
+    "@platformatic/next": "^3.39.0",
+    "@platformatic/runtime": "^3.39.0",
+    "@platformatic/watt-extra": "^1.10.0",
+    "next": "^16.2.0",
+    "platformatic": "^3.39.0",
+    "pm2": "^6.0.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "wattpm": "^3.39.0"
+  },
+  "devDependencies": {
+    "@platformatic/flame": "^1.4.0",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.0.1",
+    "@vitejs/plugin-rsc": "^0.5.21",
+    "react-server-dom-webpack": "^19.2.4",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vinext": "^0.0.31",
+    "vite": "^8.0.0"
+  },
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.21.0"
+  },
+  "type": "module"
+}
