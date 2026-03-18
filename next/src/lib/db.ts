@@ -56,11 +56,10 @@ class JsonDatabase {
   private findDataDir(): string {
     // Try common locations
     const candidates = [
+      process.env.DATA_DIR,
       path.join(process.cwd(), 'data'),
       path.join(process.cwd(), '..', 'data'),
-      path.join(__dirname, '..', 'data'),
-      path.join(__dirname, 'data'),
-    ];
+    ].filter(Boolean) as string[];
 
     for (const dir of candidates) {
       if (fs.existsSync(path.join(dir, 'games.json'))) {
