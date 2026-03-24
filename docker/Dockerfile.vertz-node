@@ -1,0 +1,10 @@
+FROM node:25-slim
+WORKDIR /app
+COPY vertz/dist dist
+COPY vertz/data data
+COPY vertz/server-node.mjs server-node.mjs
+COPY vertz/node_modules node_modules
+COPY vertz/package.json package.json
+ENV NODE_ENV=production
+EXPOSE 3000
+CMD ["node", "server-node.mjs"]
