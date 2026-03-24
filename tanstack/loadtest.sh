@@ -124,6 +124,7 @@ const GAME_SLUGS = ['pokemon', 'magic', 'yugioh', 'digimon', 'onepiece'];
 const SET_SLUGS = ['scarlet-violet', 'paldea-evolved', 'murders-at-karlov-manor', 'phantom-nightmare'];
 
 export const options = {
+  summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
   scenarios: {
     mixed_load: {
       executor: 'ramping-arrival-rate',
@@ -142,7 +143,7 @@ export const options = {
 // Helper to make request and track metrics
 function makeRequest(url, name) {
   const start = Date.now();
-  const res = http.get(url, { timeout: "10s", tags: { name: name } });
+  const res = http.get(url, { timeout: "10s", tags: { name: name }, headers: { 'Accept-Encoding': 'gzip' } });
   const duration = Date.now() - start;
 
   responseTime.add(duration);
@@ -196,10 +197,11 @@ export default function () {
 }
 
 export function handleSummary(data) {
-  const total = data.metrics.successful_requests.values.count + data.metrics.request_errors.values.count;
-  const success = data.metrics.successful_requests.values.count;
-  const errors = data.metrics.request_errors.values.count;
+  const success = data.metrics.successful_requests ? data.metrics.successful_requests.values.count : 0;
+  const errors = data.metrics.request_errors ? data.metrics.request_errors.values.count : 0;
+  const total = success + errors;
   const successRate = total > 0 ? ((success / total) * 100).toFixed(2) : 0;
+  const rt = data.metrics.response_time_ms ? data.metrics.response_time_ms.values : null;
 
   console.log('\n========================================');
   console.log('E-COMMERCE LOAD TEST SUMMARY');
@@ -209,14 +211,16 @@ export function handleSummary(data) {
   console.log('Errors:            ' + errors);
   console.log('Success Rate:      ' + successRate + '%');
   console.log('');
-  console.log('Response Times (ms):');
-  console.log('  Average:         ' + data.metrics.response_time_ms.values.avg.toFixed(2));
-  console.log('  Min:             ' + data.metrics.response_time_ms.values.min.toFixed(2));
-  console.log('  Median:          ' + data.metrics.response_time_ms.values.med.toFixed(2));
-  console.log('  Max:             ' + data.metrics.response_time_ms.values.max.toFixed(2));
-  console.log('  p(90):           ' + data.metrics.response_time_ms.values['p(90)'].toFixed(2));
-  console.log('  p(95):           ' + data.metrics.response_time_ms.values['p(95)'].toFixed(2));
-  console.log('  p(99):           ' + data.metrics.response_time_ms.values['p(99)'].toFixed(2));
+  if (rt) {
+    console.log('Response Times (ms):');
+    console.log('  Average:         ' + rt.avg.toFixed(2));
+    console.log('  Min:             ' + rt.min.toFixed(2));
+    console.log('  Median:          ' + rt.med.toFixed(2));
+    console.log('  Max:             ' + rt.max.toFixed(2));
+    console.log('  p(90):           ' + rt['p(90)'].toFixed(2));
+    console.log('  p(95):           ' + rt['p(95)'].toFixed(2));
+    console.log('  p(99):           ' + rt['p(99)'].toFixed(2));
+  }
   console.log('========================================\n');
 
   return {};

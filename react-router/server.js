@@ -1,4 +1,3 @@
-import compression from "compression";
 import express from "express";
 import pino from "pino";
 import pinoHttp from "pino-http";
@@ -17,7 +16,6 @@ const LOG_LEVEL = process.env.LOG_LEVEL || "info";
 const logger = pino({ level: LOG_LEVEL });
 const app = express();
 
-app.use(compression());
 app.disable("x-powered-by");
 
 if (DEVELOPMENT) {
