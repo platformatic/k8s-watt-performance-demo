@@ -1,8 +1,14 @@
+import { css } from '@vertz/ui';
+
+const s = css({
+  card: ['bg:white', 'rounded:lg', 'shadow:sm', 'p:8'],
+});
+
 export default function CartPage() {
   return (
     <div>
       <h1 style={{ fontSize: '30px', fontWeight: 'bold', marginBottom: '32px' }}>Shopping Cart</h1>
-      <div style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '32px', textAlign: 'center' }}>
+      <div className={s.card} style={{ textAlign: 'center' }}>
         <div style={{ color: '#9ca3af', fontSize: '60px', marginBottom: '16px' }}>&#128722;</div>
         <h2 style={{ fontSize: '20px', fontWeight: '600', marginBottom: '8px' }}>Your cart is empty</h2>
         <p style={{ color: '#6b7280', marginBottom: '24px' }}>Start browsing and add some cards to your cart!</p>

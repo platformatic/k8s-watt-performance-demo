@@ -1,4 +1,15 @@
-import { query, useRouter } from '@vertz/ui';
+import { query, useRouter, css } from '@vertz/ui';
+
+const s = css({
+  layout: ['grid', 'gap:8'],
+  sidebar: ['bg:white', 'rounded:lg', 'shadow:sm', 'p:4', 'sticky'],
+  mb4: ['mb:4'],
+  resultsHeader: ['flex', 'justify:between', 'items:center', 'mb:4'],
+  emptyCard: ['bg:white', 'rounded:lg', 'shadow:sm', 'p:8'],
+  grid: ['grid', 'grid-cols:4', 'gap:4'],
+  card: ['bg:white', 'rounded:lg', 'shadow:sm', 'p:3'],
+  pagination: ['flex', 'justify:center', 'gap:2', 'mt:8'],
+});
 
 export default function SearchPage() {
   const router = useRouter();
@@ -25,15 +36,15 @@ export default function SearchPage() {
     <div>
       <h1 style={{ fontSize: '30px', fontWeight: 'bold', marginBottom: '32px' }}>Search Cards</h1>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 3fr', gap: '32px' }}>
+      <div className={s.layout} style={{ gridTemplateColumns: '1fr 3fr' }}>
         <div>
-          <div style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '16px', position: 'sticky', top: '16px' }}>
+          <div className={s.sidebar} style={{ top: '16px' }}>
             <form action="/search" method="GET">
-              <div style={{ marginBottom: '16px' }}>
+              <div className={s.mb4}>
                 <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Search</label>
                 <input type="text" name="q" value={q || ''} placeholder="Card name..." style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '4px', padding: '8px 12px', boxSizing: 'border-box' }} />
               </div>
-              <div style={{ marginBottom: '16px' }}>
+              <div className={s.mb4}>
                 <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Game</label>
                 <select name="game" value={game || ''} style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '4px', padding: '8px 12px', boxSizing: 'border-box' }}>
                   <option value="">All Games</option>
@@ -48,21 +59,21 @@ export default function SearchPage() {
         </div>
 
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <div className={s.resultsHeader}>
             <p style={{ color: '#4b5563' }}>
               {results?.total.toLocaleString() || 0} results{q ? ` for "${q}"` : ''}
             </p>
           </div>
 
           {results && results.items.length === 0 ? (
-            <div style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '32px', textAlign: 'center' }}>
+            <div className={s.emptyCard} style={{ textAlign: 'center' }}>
               <p style={{ color: '#6b7280' }}>No cards found. Try adjusting your filters.</p>
             </div>
           ) : (
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+              <div className={s.grid}>
                 {results?.items.map((card) => (
-                  <a key={card.id} href={`/cards/${card.id}`} style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '12px', textDecoration: 'none', color: 'inherit' }}>
+                  <a key={card.id} href={`/cards/${card.id}`} className={s.card} style={{ textDecoration: 'none', color: 'inherit' }}>
                     <div style={{ aspectRatio: '3/4', backgroundColor: '#f3f4f6', borderRadius: '4px', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <span style={{ color: '#9ca3af', fontSize: '12px' }}>{card.number}</span>
                     </div>
@@ -74,7 +85,7 @@ export default function SearchPage() {
               </div>
 
               {results && results.totalPages > 1 && (
-                <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginTop: '32px' }}>
+                <div className={s.pagination}>
                   {results.page > 1 && <a href={`/search?${new URLSearchParams({ ...(q ? { q } : {}), ...(game ? { game } : {}), page: String(results.page - 1) }).toString()}`} style={{ padding: '8px 16px', backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '4px', textDecoration: 'none', color: 'inherit' }}>Previous</a>}
                   <span style={{ padding: '8px 16px' }}>Page {results.page} of {results.totalPages}</span>
                   {results.page < results.totalPages && <a href={`/search?${new URLSearchParams({ ...(q ? { q } : {}), ...(game ? { game } : {}), page: String(results.page + 1) }).toString()}`} style={{ padding: '8px 16px', backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '4px', textDecoration: 'none', color: 'inherit' }}>Next</a>}

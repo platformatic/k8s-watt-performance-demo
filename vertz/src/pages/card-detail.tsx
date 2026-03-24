@@ -1,4 +1,14 @@
-import { query, useParams } from '@vertz/ui';
+import { query, useParams, css } from '@vertz/ui';
+
+const s = css({
+  mb6: ['mb:6'],
+  layout: ['grid', 'gap:8'],
+  card: ['bg:white', 'rounded:lg', 'shadow:sm', 'p:4'],
+  infoCard: ['bg:white', 'rounded:lg', 'shadow:sm', 'p:6', 'mb:6'],
+  detailGrid: ['grid', 'grid-cols:2', 'gap:4', 'mb:6'],
+  listingsCard: ['bg:white', 'rounded:lg', 'shadow:sm'],
+  table: ['w:full'],
+});
 
 export default function CardDetailPage() {
   const { id } = useParams<'/cards/:id'>();
@@ -22,13 +32,13 @@ export default function CardDetailPage() {
 
   return (
     <div>
-      <div style={{ marginBottom: '24px' }}>
-        <a href="/search" style={{ color: '#2563eb', textDecoration: 'none' }}>← Back to Search</a>
+      <div className={s.mb6}>
+        <a href="/search" style={{ color: '#2563eb', textDecoration: 'none' }}>&larr; Back to Search</a>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '32px' }}>
+      <div className={s.layout} style={{ gridTemplateColumns: '1fr 2fr' }}>
         <div>
-          <div style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '16px' }}>
+          <div className={s.card}>
             <div style={{ aspectRatio: '3/4', backgroundColor: '#f3f4f6', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <span style={{ color: '#9ca3af' }}>{data.number}</span>
             </div>
@@ -36,11 +46,11 @@ export default function CardDetailPage() {
         </div>
 
         <div>
-          <div style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '24px', marginBottom: '24px' }}>
+          <div className={s.infoCard}>
             <h1 style={{ fontSize: '30px', fontWeight: 'bold', marginBottom: '8px' }}>{data.name}</h1>
             <p style={{ color: '#4b5563', marginBottom: '16px' }}>{data.game?.name} | {data.set?.name || data.setId} | {data.number}</p>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+            <div className={s.detailGrid}>
               <div>
                 <span style={{ fontSize: '14px', color: '#6b7280' }}>Rarity</span>
                 <p style={{ fontWeight: '600' }}>{data.rarity}</p>
@@ -60,11 +70,11 @@ export default function CardDetailPage() {
             )}
           </div>
 
-          <div style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+          <div className={s.listingsCard}>
             <div style={{ padding: '16px', borderBottom: '1px solid #e5e7eb' }}>
               <h2 style={{ fontSize: '20px', fontWeight: 'bold' }}>Available Listings</h2>
             </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table className={s.table} style={{ borderCollapse: 'collapse' }}>
               <thead style={{ backgroundColor: '#f9fafb' }}>
                 <tr>
                   <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '14px', fontWeight: '600' }}>Seller</th>
