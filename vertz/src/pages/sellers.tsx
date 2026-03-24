@@ -1,4 +1,10 @@
-import { query } from '@vertz/ui';
+import { query, css } from '@vertz/ui';
+
+const s = css({
+  grid: ['grid', 'grid-cols:3', 'gap:6'],
+  card: ['bg:white', 'rounded:lg', 'shadow:sm', 'p:6'],
+  cardHeader: ['flex', 'justify:between', 'items:start', 'mb:4'],
+});
 
 export default function SellersPage() {
   const sellersQuery = query(async () => {
@@ -10,10 +16,10 @@ export default function SellersPage() {
   return (
     <div>
       <h1 style={{ fontSize: '30px', fontWeight: 'bold', marginBottom: '32px' }}>Marketplace Sellers</h1>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px' }}>
+      <div className={s.grid}>
         {sellersQuery.data?.map((seller) => (
-          <a key={seller.id} href={`/sellers/${seller.slug}`} style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '24px', textDecoration: 'none', color: 'inherit' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+          <a key={seller.id} href={`/sellers/${seller.slug}`} className={s.card} style={{ textDecoration: 'none', color: 'inherit' }}>
+            <div className={s.cardHeader}>
               <div>
                 <h2 style={{ fontSize: '20px', fontWeight: 'bold' }}>{seller.name}</h2>
                 <p style={{ fontSize: '14px', color: '#6b7280' }}>{seller.location}</p>

@@ -1,4 +1,12 @@
-import { query } from '@vertz/ui';
+import { query, css } from '@vertz/ui';
+
+const s = css({
+  section: ['mb:12'],
+  sectionHeader: ['flex', 'justify:between', 'items:center', 'mb:6'],
+  grid5: ['grid', 'grid-cols:5', 'gap:4'],
+  grid4: ['grid', 'grid-cols:4', 'gap:4'],
+  card: ['bg:white', 'rounded:lg', 'shadow:sm', 'p:4'],
+});
 
 export default function HomePage() {
   const gamesQuery = query(async () => {
@@ -24,14 +32,14 @@ export default function HomePage() {
         <a href="/search" style={{ display: 'inline-block', backgroundColor: 'white', color: '#2563eb', padding: '12px 24px', borderRadius: '8px', fontWeight: '600', textDecoration: 'none' }}>Start Shopping</a>
       </section>
 
-      <section style={{ marginBottom: '48px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <section className={s.section}>
+        <div className={s.sectionHeader}>
           <h2 style={{ fontSize: '24px', fontWeight: 'bold' }}>Browse by Game</h2>
           <a href="/games" style={{ color: '#2563eb', textDecoration: 'none' }}>View All</a>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px' }}>
+        <div className={s.grid5}>
           {gamesQuery.data?.map((game) => (
-            <a key={game.id} href={`/games/${game.slug}`} style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '16px', textDecoration: 'none', color: 'inherit' }}>
+            <a key={game.id} href={`/games/${game.slug}`} className={s.card} style={{ textDecoration: 'none', color: 'inherit' }}>
               <div style={{ aspectRatio: '1', backgroundColor: '#f3f4f6', borderRadius: '4px', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <span style={{ fontSize: '30px' }}>{game.name.charAt(0)}</span>
               </div>
@@ -42,14 +50,14 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section style={{ marginBottom: '48px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <section className={s.section}>
+        <div className={s.sectionHeader}>
           <h2 style={{ fontSize: '24px', fontWeight: 'bold' }}>Trending Cards</h2>
           <a href="/search?sort=trending" style={{ color: '#2563eb', textDecoration: 'none' }}>View All</a>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+        <div className={s.grid4}>
           {trendingQuery.data?.map((card) => (
-            <a key={card.id} href={`/cards/${card.id}`} style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '16px', textDecoration: 'none', color: 'inherit' }}>
+            <a key={card.id} href={`/cards/${card.id}`} className={s.card} style={{ textDecoration: 'none', color: 'inherit' }}>
               <div style={{ aspectRatio: '3/4', backgroundColor: '#f3f4f6', borderRadius: '4px', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <span style={{ color: '#9ca3af', fontSize: '14px' }}>{card.number}</span>
               </div>
@@ -61,13 +69,13 @@ export default function HomePage() {
       </section>
 
       <section>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+        <div className={s.sectionHeader}>
           <h2 style={{ fontSize: '24px', fontWeight: 'bold' }}>New Releases</h2>
           <a href="/games" style={{ color: '#2563eb', textDecoration: 'none' }}>View All Sets</a>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+        <div className={s.grid4}>
           {releasesQuery.data?.map((set) => (
-            <a key={set.id} href={`/sets/${set.slug}`} style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '16px', textDecoration: 'none', color: 'inherit' }}>
+            <a key={set.id} href={`/sets/${set.slug}`} className={s.card} style={{ textDecoration: 'none', color: 'inherit' }}>
               <div style={{ aspectRatio: '16/9', backgroundColor: '#f3f4f6', borderRadius: '4px', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <span style={{ color: '#9ca3af' }}>{set.name.substring(0, 2)}</span>
               </div>

@@ -1,4 +1,13 @@
-import { query, useParams, useRouter } from '@vertz/ui';
+import { query, useParams, useRouter, css } from '@vertz/ui';
+
+const s = css({
+  header: ['mb:8'],
+  infoCard: ['bg:white', 'rounded:lg', 'shadow:sm', 'p:6'],
+  infoHeader: ['flex', 'justify:between', 'items:start'],
+  tableCard: ['bg:white', 'rounded:lg', 'shadow:sm', 'overflow:hidden'],
+  table: ['w:full'],
+  pagination: ['flex', 'justify:center', 'gap:2', 'mt:8'],
+});
 
 export default function SellerDetailPage() {
   const { slug } = useParams<'/sellers/:slug'>();
@@ -20,10 +29,10 @@ export default function SellerDetailPage() {
 
   return (
     <div>
-      <div style={{ marginBottom: '32px' }}>
-        <a href="/sellers" style={{ color: '#2563eb', textDecoration: 'none', marginBottom: '16px', display: 'inline-block' }}>← Back to Sellers</a>
-        <div style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div className={s.header}>
+        <a href="/sellers" style={{ color: '#2563eb', textDecoration: 'none', marginBottom: '16px', display: 'inline-block' }}>&larr; Back to Sellers</a>
+        <div className={s.infoCard}>
+          <div className={s.infoHeader}>
             <div>
               <h1 style={{ fontSize: '30px', fontWeight: 'bold' }}>{data.name}</h1>
               <p style={{ color: '#4b5563', marginTop: '4px' }}>{data.location}</p>
@@ -41,8 +50,8 @@ export default function SellerDetailPage() {
 
       <h2 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '24px' }}>Current Listings</h2>
 
-      <div style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <div className={s.tableCard}>
+        <table className={s.table} style={{ borderCollapse: 'collapse' }}>
           <thead style={{ backgroundColor: '#f9fafb' }}>
             <tr>
               <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '14px', fontWeight: '600' }}>Card</th>
@@ -73,7 +82,7 @@ export default function SellerDetailPage() {
       </div>
 
       {data.totalPages > 1 && (
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginTop: '32px' }}>
+        <div className={s.pagination}>
           {page > 1 && <a href={`/sellers/${slug}?page=${page - 1}`} style={{ padding: '8px 16px', backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '4px', textDecoration: 'none', color: 'inherit' }}>Previous</a>}
           <span style={{ padding: '8px 16px' }}>Page {page} of {data.totalPages}</span>
           {page < data.totalPages && <a href={`/sellers/${slug}?page=${page + 1}`} style={{ padding: '8px 16px', backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '4px', textDecoration: 'none', color: 'inherit' }}>Next</a>}

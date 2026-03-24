@@ -1,4 +1,9 @@
-import { query } from '@vertz/ui';
+import { query, css } from '@vertz/ui';
+
+const s = css({
+  grid: ['grid', 'grid-cols:3', 'gap:6'],
+  card: ['bg:white', 'rounded:lg', 'shadow:sm', 'p:6'],
+});
 
 export default function GamesPage() {
   const gamesQuery = query(async () => {
@@ -9,9 +14,9 @@ export default function GamesPage() {
   return (
     <div>
       <h1 style={{ fontSize: '30px', fontWeight: 'bold', marginBottom: '32px' }}>All Games</h1>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px' }}>
+      <div className={s.grid}>
         {gamesQuery.data?.map((game) => (
-          <a key={game.id} href={`/games/${game.slug}`} style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '24px', textDecoration: 'none', color: 'inherit' }}>
+          <a key={game.id} href={`/games/${game.slug}`} className={s.card} style={{ textDecoration: 'none', color: 'inherit' }}>
             <div style={{ aspectRatio: '16/9', backgroundColor: '#f3f4f6', borderRadius: '4px', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <span style={{ fontSize: '48px', fontWeight: 'bold', color: '#d1d5db' }}>{game.name.charAt(0)}</span>
             </div>
