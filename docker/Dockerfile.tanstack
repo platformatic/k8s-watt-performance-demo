@@ -1,0 +1,7 @@
+FROM node:25-slim
+WORKDIR /app
+COPY tanstack/.output .output
+COPY tanstack/data data
+ENV NODE_ENV=production
+EXPOSE 3000
+CMD ["node", ".output/server/index.mjs"]
