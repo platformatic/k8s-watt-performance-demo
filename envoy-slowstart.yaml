@@ -1,0 +1,126 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: next-headless
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/instance: next
+  ports:
+    - port: 3042
+      targetPort: 3042
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-config
+data:
+  envoy.yaml: |
+    static_resources:
+      listeners:
+        - name: listener_0
+          address:
+            socket_address:
+              address: 0.0.0.0
+              port_value: 8080
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    stat_prefix: ingress_http
+                    route_config:
+                      name: local_route
+                      virtual_hosts:
+                        - name: backend
+                          domains: ["*"]
+                          routes:
+                            - match:
+                                prefix: "/"
+                              route:
+                                cluster: next_cluster
+                    http_filters:
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+      clusters:
+        - name: next_cluster
+          connect_timeout: 5s
+          type: STRICT_DNS
+          dns_refresh_rate: 5s
+          lb_policy: ROUND_ROBIN
+          round_robin_lb_config:
+            slow_start_config:
+              slow_start_window: 30s
+          load_assignment:
+            cluster_name: next_cluster
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: next-headless
+                          port_value: 3042
+    admin:
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9901
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy-lb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: envoy-lb
+  template:
+    metadata:
+      labels:
+        app: envoy-lb
+    spec:
+      containers:
+        - name: envoy
+          image: envoyproxy/envoy:v1.31-latest
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: '500m'
+              memory: '256Mi'
+            limits:
+              cpu: '1000m'
+              memory: '512Mi'
+          volumeMounts:
+            - name: envoy-config
+              mountPath: /etc/envoy
+      volumes:
+        - name: envoy-config
+          configMap:
+            name: envoy-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: envoy-lb
+  labels:
+    app: envoy-lb
+  annotations:
+    benchmark.platformatic.dev/expose: "true"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    app: envoy-lb
+  ports:
+    - name: app
+      port: 80
+      targetPort: 8080

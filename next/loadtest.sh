@@ -1,30 +1,26 @@
 #!/bin/bash
 
-# E-commerce Load Test Script
-# Tests realistic e-commerce scenarios: homepage, search, card details, game browsing, sellers
-# Produces verbose output for debugging
+# Scaler Benchmark Load Test Script
+# Constant load against a single endpoint to test scaler behavior
+# Called once per scaler by the benchmark orchestrator
 
 set -e
 
-# Ensure LoadBalancer URLs are set
-if [ -z "$URL_NODE" ] || [ -z "$URL_PM2" ] || [ -z "$URL_WATT" ]; then
-  echo "Error: URL_NODE, URL_PM2, and URL_WATT environment variables must be set"
+# Ensure LoadBalancer URL is set
+if [ -z "$URL_APP" ]; then
+  echo "Error: URL_APP environment variable must be set"
   exit 1
 fi
 
 echo "========================================================================"
-echo "E-COMMERCE LOAD TEST CONFIGURATION"
+echo "SCALER BENCHMARK LOAD TEST"
 echo "========================================================================"
-echo "URL_NODE: $URL_NODE"
-echo "URL_PM2:  $URL_PM2"
-echo "URL_WATT: $URL_WATT"
+echo "URL_APP: $URL_APP"
+echo "SCALER: ${SCALER_NAME:-unknown}"
 echo ""
 echo "Test Parameters:"
-echo "  - Initial NLB warm-up: 60s per endpoint (10->500 req/s ramp)"
-echo "  - Pre-test warm-up: 20s per endpoint (50->400 req/s ramp)"
-echo "  - Post-warmup wait: 60s before main test"
-echo "  - Test duration: 60s ramp-up (0->1000 req/s) + 120s @ 1000 req/s"
-echo "  - Cooldown: 480s between tests"
+echo "  - Rate: 1000 req/s constant"
+echo "  - Duration: 3 minutes"
 echo "  - Scenarios: Homepage, Search, Card Detail, Game Browse, Sellers"
 echo "========================================================================"
 
@@ -64,50 +60,11 @@ check_endpoint() {
   return 1
 }
 
-check_endpoint "PM2" "$URL_PM2/"
-check_endpoint "Watt" "$URL_WATT/"
-check_endpoint "Node" "$URL_NODE/"
+check_endpoint "App" "$URL_APP/"
 
 echo "========================================================================"
 
-# Warm-up k6 script - gradual ramp to warm up NLB and connection pools
-K6_WARMUP_SCRIPT=$(cat <<'EOF'
-import http from 'k6/http';
-import { check } from 'k6';
-
-export const options = {
-  scenarios: {
-    warmup: {
-      executor: 'ramping-arrival-rate',
-      startRate: 10,
-      timeUnit: '1s',
-      preAllocatedVUs: 100,
-      maxVUs: 500,
-      stages: [
-        { duration: '15s', target: 100 },
-        { duration: '15s', target: 300 },
-        { duration: '15s', target: 500 },
-        { duration: '15s', target: 500 },
-      ],
-    },
-  },
-  thresholds: {
-    http_req_failed: ['rate<0.1'],
-  },
-};
-
-export default function () {
-  const res = http.get(__ENV.TARGET, {
-    timeout: "10s",
-  });
-  check(res, {
-    'status is 200': (r) => r.status === 200,
-  });
-}
-EOF
-)
-
-# E-commerce k6 test script - mixed realistic scenarios
+# E-commerce k6 test script - constant rate, mixed realistic scenarios
 K6_ECOMMERCE_SCRIPT=$(cat <<'EOF'
 import http from 'k6/http';
 import { check, sleep } from 'k6';
@@ -124,16 +81,25 @@ const GAME_SLUGS = ['pokemon', 'magic', 'yugioh', 'digimon', 'onepiece'];
 const SET_SLUGS = ['scarlet-violet', 'paldea-evolved', 'murders-at-karlov-manor', 'phantom-nightmare'];
 
 export const options = {
+  summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
+  noConnectionReuse: true,
   scenarios: {
-    mixed_load: {
+    ramping_load: {
       executor: 'ramping-arrival-rate',
-      startRate: 0,
+      startRate: 100,
       timeUnit: '1s',
       preAllocatedVUs: 2000,
-      maxVUs: 20000,
+      maxVUs: 2000,
       stages: [
-        { duration: '60s', target: 1000 },  // Ramp up over 60s
-        { duration: '120s', target: 1000 }, // Constant at 1000 req/s for 120s
+        { duration: '30s', target: 10 },
+        { duration: '20s', target: 200 },
+        { duration: '20s', target: 300 },
+        { duration: '20s', target: 400 },
+        { duration: '20s', target: 500 },
+        { duration: '20s', target: 600 },
+        { duration: '20s', target: 700 },
+        { duration: '20s', target: 800 },
+        { duration: '40s', target: 800 },
       ],
     },
   },
@@ -202,7 +168,7 @@ export function handleSummary(data) {
   const successRate = total > 0 ? ((success / total) * 100).toFixed(2) : 0;
 
   console.log('\n========================================');
-  console.log('E-COMMERCE LOAD TEST SUMMARY');
+  console.log('LOAD TEST SUMMARY');
   console.log('========================================');
   console.log('Total Requests:    ' + total);
   console.log('Successful:        ' + success);
@@ -224,108 +190,16 @@ export function handleSummary(data) {
 EOF
 )
 
-run_warmup() {
-  local name=$1
-  local url=$2
-  echo ""
-  echo "========================================================================"
-  echo "NLB WARM-UP: $name"
-  echo "Target: $url"
-  echo "Duration: 60s (10->500 req/s ramp)"
-  echo "========================================================================"
-  echo "$K6_WARMUP_SCRIPT" | k6 run --quiet -e TARGET="$url" -
-  echo "Warm-up complete for $name"
-}
-
-run_pre_test_warmup() {
-  local name=$1
-  local url=$2
-  echo ""
-  echo "------------------------------------------------------------------------"
-  echo "Pre-test warm-up: $name (20s @ 50->400 req/s)"
-  echo "------------------------------------------------------------------------"
-  echo "$K6_WARMUP_SCRIPT" | k6 run --quiet -e TARGET="$url" - --duration 20s
-}
-
-run_ecommerce_test() {
-  local name=$1
-  local url=$2
-  echo ""
-  echo "========================================================================"
-  echo "E-COMMERCE LOAD TEST: $name"
-  echo "Target: $url"
-  echo "Duration: 60s ramp-up + 120s @ 1000 req/s (mixed scenarios)"
-  echo "========================================================================"
-
-  # Pre-test warm-up
-  run_pre_test_warmup "$name" "$url"
-
-  echo ""
-  echo "Waiting 60s before main load test..."
-  sleep 60
-
-  echo ""
-  echo "Starting main load test..."
-  echo "$K6_ECOMMERCE_SCRIPT" | k6 run -e TARGET="$url" -
-
-  echo ""
-  echo "Test complete for $name"
-}
-
-# Phase 1: NLB Warm-up for all endpoints
+# Run constant load test
 echo ""
 echo "========================================================================"
-echo "PHASE 1: NLB WARM-UP (ALL ENDPOINTS)"
+echo "STARTING CONSTANT LOAD TEST (scaler: ${SCALER_NAME:-unknown})"
+echo "Start time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "========================================================================"
-run_warmup "PM2" "$URL_PM2"
-run_warmup "Watt" "$URL_WATT"
-run_warmup "Node" "$URL_NODE"
+
+echo "$K6_ECOMMERCE_SCRIPT" | k6 run -e TARGET="$URL_APP" -
 
 echo ""
 echo "========================================================================"
-echo "NLB warm-up complete. Waiting 60s before starting tests..."
-echo "========================================================================"
-sleep 60
-
-# Phase 2: Run load tests
-echo ""
-echo "========================================================================"
-echo "PHASE 2: E-COMMERCE LOAD TESTS"
-echo "========================================================================"
-
-# Test PM2 first
-run_ecommerce_test "PM2" "$URL_PM2"
-
-# Upload results to S3 after PM2 test (if function is available)
-if type upload_to_s3 &>/dev/null; then
-  upload_to_s3 "pm2"
-fi
-
-echo ""
-echo "Cooldown: 480s before next test..."
-sleep 480
-
-# Test Watt
-run_ecommerce_test "Watt" "$URL_WATT"
-
-# Upload results to S3 after Watt test (if function is available)
-if type upload_to_s3 &>/dev/null; then
-  upload_to_s3 "watt"
-fi
-
-echo ""
-echo "Cooldown: 480s before next test..."
-sleep 480
-
-# Test Node
-run_ecommerce_test "Node" "$URL_NODE"
-
-# Upload results to S3 after Node test (if function is available)
-if type upload_to_s3 &>/dev/null; then
-  upload_to_s3 "node"
-fi
-
-echo ""
-echo "========================================================================"
-echo "ALL E-COMMERCE LOAD TESTS COMPLETE"
+echo "LOAD TEST COMPLETE (scaler: ${SCALER_NAME:-unknown})"
 echo "========================================================================"

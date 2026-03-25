@@ -362,13 +362,49 @@ cleanup_from_state() {
 		[[ "$DRY_RUN" != "true" ]] && mark_resource_cleaned "iam" "cluster_role_name"
 	fi
 
-	# Delete ECR repository
-	if [[ -n "$STATE_ECR_REPO_NAME" && "$STATE_ECR_REPO_CREATED" == "true" ]]; then
-		log "Deleting ECR repository: $STATE_ECR_REPO_NAME"
-		run_cmd aws ecr delete-repository \
-			--repository-name "$STATE_ECR_REPO_NAME" \
-			--force \
+	# Delete EBS CSI IAM role
+	if [[ -n "$STATE_EBS_CSI_ROLE_NAME" ]]; then
+		log "Deleting EBS CSI IAM role: $STATE_EBS_CSI_ROLE_NAME"
+		run_cmd aws iam detach-role-policy \
+			--role-name "$STATE_EBS_CSI_ROLE_NAME" \
+			--policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy \
 			--profile "$AWS_PROFILE" 2>/dev/null || true
+		run_cmd aws iam delete-role \
+			--role-name "$STATE_EBS_CSI_ROLE_NAME" \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
+		[[ "$DRY_RUN" != "true" ]] && mark_resource_cleaned "iam" "ebs_csi_role_name"
+	fi
+
+	# Delete OIDC provider
+	if [[ -n "$STATE_CLUSTER_NAME" ]]; then
+		log "Deleting OIDC provider for cluster: $STATE_CLUSTER_NAME"
+		local oidc_id
+		oidc_id=$(aws eks describe-cluster \
+			--name "$STATE_CLUSTER_NAME" \
+			--profile "$AWS_PROFILE" \
+			--query 'cluster.identity.oidc.issuer' \
+			--output text 2>/dev/null | awk -F/ '{print $NF}') || true
+		if [[ -n "$oidc_id" && "$oidc_id" != "None" ]]; then
+			local account_id
+			account_id=$(aws sts get-caller-identity --profile "$AWS_PROFILE" --query 'Account' --output text 2>/dev/null) || true
+			local aws_region
+			aws_region=$(aws configure get region --profile "$AWS_PROFILE" 2>/dev/null || echo "${STATE_AWS_REGION:-us-east-1}")
+			local oidc_arn="arn:aws:iam::${account_id}:oidc-provider/oidc.eks.${aws_region}.amazonaws.com/id/${oidc_id}"
+			run_cmd aws iam delete-open-id-connect-provider \
+				--open-id-connect-provider-arn "$oidc_arn" \
+				--profile "$AWS_PROFILE" 2>/dev/null || true
+		fi
+	fi
+
+	# Delete ECR repositories (app + icc + machinist)
+	if [[ -n "$STATE_ECR_REPO_NAME" && "$STATE_ECR_REPO_CREATED" == "true" ]]; then
+		for repo in "$STATE_ECR_REPO_NAME" "watt-benchmark-icc" "watt-benchmark-machinist"; do
+			log "Deleting ECR repository: $repo"
+			run_cmd aws ecr delete-repository \
+				--repository-name "$repo" \
+				--force \
+				--profile "$AWS_PROFILE" 2>/dev/null || true
+		done
 		[[ "$DRY_RUN" != "true" ]] && mark_resource_cleaned "ecr" "repo_name"
 		[[ "$DRY_RUN" != "true" ]] && mark_resource_cleaned "ecr" "repo_created"
 	fi

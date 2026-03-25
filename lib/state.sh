@@ -195,6 +195,7 @@ load_state() {
 	# Load resources - IAM
 	STATE_CLUSTER_ROLE_NAME=$(jq -r '.resources.iam.cluster_role_name // empty' "$file")
 	STATE_NODE_ROLE_NAME=$(jq -r '.resources.iam.node_role_name // empty' "$file")
+	STATE_EBS_CSI_ROLE_NAME=$(jq -r '.resources.iam.ebs_csi_role_name // empty' "$file")
 	STATE_LOADTEST_ROLE_NAME=$(jq -r '.resources.iam.loadtest_role_name // empty' "$file")
 	STATE_LOADTEST_INSTANCE_PROFILE_NAME=$(jq -r '.resources.iam.loadtest_instance_profile_name // empty' "$file")
 

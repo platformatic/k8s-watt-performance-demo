@@ -10,7 +10,7 @@
     "server": {
       "hostname": "{HOSTNAME}",
       "port": "{PORT}",
-      "backlog": "{BACKLOG}" 
+      "backlog": "{BACKLOG}"
     },
     "metrics": {
       "enabled": "{PLT_SERVER_METRICS}"

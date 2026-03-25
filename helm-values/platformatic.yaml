@@ -1,0 +1,75 @@
+# Helm values for platformatic/helm chart
+# Connection strings are templated and replaced at deploy time by benchmark.sh
+
+applicationNamespaces:
+  - default
+
+services:
+  icc:
+    image:
+      repository: "ICC_IMAGE_REPO_PLACEHOLDER"
+      tag: "ICC_IMAGE_TAG_PLACEHOLDER"
+      pullPolicy: Always
+
+    replicas:
+      min: 1
+      max: 1
+
+    resources:
+      limits:
+        cpu: 2
+        memory: 4Gi
+      requests:
+        cpu: 1
+        memory: 2Gi
+
+    database_url: "POSTGRES_URL_PLACEHOLDER"
+
+    valkey:
+      apps_url: "VALKEY_URL_PLACEHOLDER"
+      icc_url: "VALKEY_URL_PLACEHOLDER"
+
+    prometheus:
+      url: "PROMETHEUS_URL_PLACEHOLDER"
+
+    features:
+      cache:
+        enable: false
+      cache_recommendations:
+        enable: false
+      risk_service_dump:
+        enable: false
+      ffc:
+        enable: false
+      icc_jobs:
+        enable: true
+
+    login_methods:
+      demo:
+        enable: true
+      google:
+        enable: false
+      github:
+        enable: false
+
+    secrets:
+      icc_session: "nqS4bQDlFNZfd1PtLwbkCDEgJiozzxRuyslNPtSSdeQ="
+      control_plane_keys: "iUIz122f2Kh49Q2PvGxJWuajJRm8B0TZ7orfGbf29LA="
+      user_manager_session: "XnlPIbATw2x/7xIX304esO9qKuCZLR3HOa8wTF6O3pc="
+
+    scaler:
+      algorithm_version: "v2"
+
+    log_level: info
+
+  machinist:
+    image:
+      repository: "MACHINIST_IMAGE_REPO_PLACEHOLDER"
+      tag: "MACHINIST_IMAGE_TAG_PLACEHOLDER"
+      pullPolicy: Always
+
+    features:
+      event_export:
+        enable: false
+
+    log_level: info

@@ -1,0 +1,15 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: next-keda
+spec:
+  scaleTargetRef:
+    name: next
+  minReplicaCount: 4
+  maxReplicaCount: 20
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus-kube-prometheus-prometheus.default.svc.cluster.local:9090
+        query: sum(avg by (pod) (nodejs_eventloop_utilization{namespace="default",pod=~"next.*"}))
+        threshold: "0.7"

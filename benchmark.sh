@@ -15,14 +15,28 @@ CLUSTER_NAME="${CLUSTER_NAME:-watt-benchmark-$(date +%s)}"
 AWS_PROFILE="${AWS_PROFILE}"
 NODE_TYPE="${NODE_TYPE:-m5.2xlarge}"
 NODE_COUNT="${NODE_COUNT:-4}"
-FRAMEWORK="${FRAMEWORK:-next}"
+FRAMEWORK="next"
 FRAMEWORK_SOURCE_DIR="$PROJECT_ROOT/$FRAMEWORK"
 KUBE_MANIFEST="${FRAMEWORK_SOURCE_DIR}/kube.yaml"
+SCALERS_DIR="$PROJECT_ROOT/scalers"
 AMI_ID="${AMI_ID:-ami-07b2b18045edffe90}" # Amazon Linux 2023 arm64
 LOADTESTING_INSTANCE_TYPE="${LOADTESTING_INSTANCE_TYPE:-c7gn.2xlarge}"
 ECR_REPO_NAME="${ECR_REPO_NAME:-watt-benchmark}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
-S3_BUCKET_NAME=""  # Will be set dynamically with cluster name
+ICC_REPO="${ICC_REPO:-$HOME/projects/platformatic/icc-3}"
+MACHINIST_REPO="${MACHINIST_REPO:-$HOME/projects/platformatic/machinist}"
+S3_BUCKET_NAME=""
+
+# Scaler benchmark configuration (override with: SCALERS="hpa" ./benchmark.sh)
+if [[ -n "${SCALERS:-}" ]]; then
+	IFS=' ' read -ra SCALERS <<< "$SCALERS"
+else
+	SCALERS=("icc" "keda" "hpa")
+fi
+COOLDOWN_BETWEEN_SCALERS="${COOLDOWN_BETWEEN_SCALERS:-120}"
+MIN_PODS=4
+MAX_PODS=20
+PORT_FORWARD_PID=""
 
 # Infrastructure resource names (set by creation functions)
 CLUSTER_ROLE_NAME=""
@@ -42,8 +56,27 @@ AWS_ACCOUNT_ID=""
 AWS_REGION=""
 ECR_IMAGE_URI=""
 ECR_REPO_CREATED=""
+ICC_IMAGE_URI=""
+MACHINIST_IMAGE_URI=""
+EBS_CSI_ROLE_NAME=""
 
 cleanup_instances() {
+	# Kill background processes
+	if [[ -n "$PORT_FORWARD_PID" ]]; then
+		kill "$PORT_FORWARD_PID" 2>/dev/null || true
+	fi
+
+	# Uninstall Helm releases before deleting the cluster
+	if [[ -n "$KUBE_CONTEXT" ]]; then
+		log "Uninstalling Helm releases..."
+		helm uninstall platformatic --namespace platformatic --kube-context "$KUBE_CONTEXT" 2>/dev/null || true
+		helm uninstall metrics-server --namespace kube-system --kube-context "$KUBE_CONTEXT" 2>/dev/null || true
+		helm uninstall keda --kube-context "$KUBE_CONTEXT" 2>/dev/null || true
+		helm uninstall prometheus --kube-context "$KUBE_CONTEXT" 2>/dev/null || true
+		helm uninstall postgres --kube-context "$KUBE_CONTEXT" 2>/dev/null || true
+		helm uninstall valkey --kube-context "$KUBE_CONTEXT" 2>/dev/null || true
+	fi
+
 	# Terminate load test EC2 instance and wait for it
 	if [[ -n "$LOAD_TEST_INSTANCE_ID" ]]; then
 		log "Terminating load_test instance: $LOAD_TEST_INSTANCE_ID"
@@ -101,6 +134,23 @@ cleanup_instances() {
 				--name "$CLUSTER_NAME" \
 				--profile "$AWS_PROFILE" 2>&1 | grep -v "waiting" || true
 		fi
+	fi
+
+	# Delete orphaned EBS volumes created by PVCs
+	if [[ -n "$CLUSTER_NAME" ]]; then
+		log "Deleting orphaned EBS volumes..."
+		local volumes
+		volumes=$(aws ec2 describe-volumes \
+			--filters "Name=status,Values=available" "Name=tag:Name,Values=*${CLUSTER_NAME}*" \
+			--query 'Volumes[*].VolumeId' \
+			--output text \
+			--profile "$AWS_PROFILE" 2>/dev/null || true)
+		for vol in $volumes; do
+			log "Deleting EBS volume: $vol"
+			aws ec2 delete-volume \
+				--volume-id "$vol" \
+				--profile "$AWS_PROFILE" 2>/dev/null || true
+		done
 	fi
 
 	# Delete Load Balancers in VPC (created by K8s LoadBalancer services)
@@ -262,6 +312,10 @@ cleanup_instances() {
 			--role-name "$NODE_ROLE_NAME" \
 			--policy-arn arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy \
 			--profile "$AWS_PROFILE" 2>/dev/null || true
+		aws iam detach-role-policy \
+			--role-name "$NODE_ROLE_NAME" \
+			--policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
 		aws iam delete-role \
 			--role-name "$NODE_ROLE_NAME" \
 			--profile "$AWS_PROFILE" 2>/dev/null || true
@@ -280,13 +334,43 @@ cleanup_instances() {
 		mark_resource_cleaned "iam" "cluster_role_name"
 	fi
 
-	# Delete ECR repository
-	if [[ -n "$ECR_REPO_CREATED" && "$ECR_REPO_CREATED" == "true" ]]; then
-		log "Deleting ECR repository: $ECR_REPO_NAME"
-		aws ecr delete-repository \
-			--repository-name "$ECR_REPO_NAME" \
-			--force \
+	# Delete EBS CSI IAM role and OIDC provider
+	if [[ -n "$EBS_CSI_ROLE_NAME" ]]; then
+		log "Deleting EBS CSI IAM role: $EBS_CSI_ROLE_NAME"
+		aws iam detach-role-policy \
+			--role-name "$EBS_CSI_ROLE_NAME" \
+			--policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy \
 			--profile "$AWS_PROFILE" 2>/dev/null || true
+		aws iam delete-role \
+			--role-name "$EBS_CSI_ROLE_NAME" \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
+	fi
+
+	# Delete OIDC provider
+	if [[ -n "$CLUSTER_NAME" ]]; then
+		local oidc_id
+		oidc_id=$(aws eks describe-cluster \
+			--name "$CLUSTER_NAME" \
+			--profile "$AWS_PROFILE" \
+			--query 'cluster.identity.oidc.issuer' \
+			--output text 2>/dev/null | awk -F/ '{print $NF}') || true
+		if [[ -n "$oidc_id" ]]; then
+			local oidc_arn="arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/oidc.eks.${AWS_REGION}.amazonaws.com/id/${oidc_id}"
+			aws iam delete-open-id-connect-provider \
+				--open-id-connect-provider-arn "$oidc_arn" \
+				--profile "$AWS_PROFILE" 2>/dev/null || true
+		fi
+	fi
+
+	# Delete ECR repositories
+	if [[ -n "$ECR_REPO_CREATED" && "$ECR_REPO_CREATED" == "true" ]]; then
+		for repo in "$ECR_REPO_NAME" "watt-benchmark-icc" "watt-benchmark-machinist"; do
+			log "Deleting ECR repository: $repo"
+			aws ecr delete-repository \
+				--repository-name "$repo" \
+				--force \
+				--profile "$AWS_PROFILE" 2>/dev/null || true
+		done
 		mark_resource_cleaned "ecr" "repo_name"
 		mark_resource_cleaned "ecr" "repo_created"
 	fi
@@ -378,26 +462,40 @@ validate_eks_tools() {
 		return 1
 	fi
 
+	if ! check_tool "helm" "Please install helm: https://helm.sh/docs/intro/install/"; then
+		return 1
+	fi
+
 	success "EKS tools validated"
 	return 0
 }
 
 validate_framework_manifests() {
-	log "Validating framework manifests for: $FRAMEWORK"
-
-	if [[ ! -d "$FRAMEWORK_SOURCE_DIR" ]]; then
-		error "Framework directory not found: $FRAMEWORK_SOURCE_DIR"
-		error "Available frameworks: next, react-router, tanstack"
-		return 1
-	fi
+	log "Validating manifests..."
 
 	if [[ ! -f "$KUBE_MANIFEST" ]]; then
 		error "Kubernetes manifest not found: $KUBE_MANIFEST"
-		error "Expected kube.yaml in $FRAMEWORK directory"
 		return 1
 	fi
 
-	success "Framework manifests validated for: $FRAMEWORK"
+	if [[ ! -d "$SCALERS_DIR" ]]; then
+		error "Scalers directory not found: $SCALERS_DIR"
+		return 1
+	fi
+
+	if [[ ! -f "$ICC_REPO/Dockerfile" ]]; then
+		error "ICC Dockerfile not found at: $ICC_REPO/Dockerfile"
+		error "Set ICC_REPO to the path of the ICC repository"
+		return 1
+	fi
+
+	if [[ ! -f "$MACHINIST_REPO/Dockerfile" ]]; then
+		error "Machinist Dockerfile not found at: $MACHINIST_REPO/Dockerfile"
+		error "Set MACHINIST_REPO to the path of the Machinist repository"
+		return 1
+	fi
+
+	success "Manifests validated"
 	return 0
 }
 
@@ -523,6 +621,65 @@ build_and_push_image() {
 	success "Image pushed and verified: $ECR_IMAGE_URI"
 }
 
+build_and_push_platform_images() {
+	local ecr_base="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+	# Create ECR repos for ICC and Machinist
+	for repo in "watt-benchmark-icc" "watt-benchmark-machinist"; do
+		if ! aws ecr describe-repositories \
+			--repository-names "$repo" \
+			--profile "$AWS_PROFILE" >/dev/null 2>&1; then
+			aws ecr create-repository \
+				--repository-name "$repo" \
+				--profile "$AWS_PROFILE" \
+				--image-scanning-configuration scanOnPush=false \
+				>/dev/null
+		fi
+	done
+
+	ICC_IMAGE_URI="${ecr_base}/watt-benchmark-icc:${IMAGE_TAG}"
+	MACHINIST_IMAGE_URI="${ecr_base}/watt-benchmark-machinist:${IMAGE_TAG}"
+
+	# Build ICC
+	log "Building ICC image from $ICC_REPO..."
+	if ! docker build \
+		--platform linux/amd64 \
+		--build-arg ICC_COMMIT_HASH="$(cd "$ICC_REPO" && git rev-parse HEAD 2>/dev/null || echo 'unknown')" \
+		--build-arg ICC_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		-t "$ICC_IMAGE_URI" \
+		"$ICC_REPO"; then
+		error "ICC Docker build failed"
+		return 1
+	fi
+
+	# Build Machinist
+	log "Building Machinist image from $MACHINIST_REPO..."
+	if ! docker build \
+		--platform linux/amd64 \
+		--build-arg COMMIT_HASH="$(cd "$MACHINIST_REPO" && git rev-parse HEAD 2>/dev/null || echo 'unknown')" \
+		--build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		-t "$MACHINIST_IMAGE_URI" \
+		"$MACHINIST_REPO"; then
+		error "Machinist Docker build failed"
+		return 1
+	fi
+
+	# Push both
+	log "Pushing ICC image to ECR..."
+	if ! docker push "$ICC_IMAGE_URI"; then
+		error "ICC Docker push failed"
+		return 1
+	fi
+
+	log "Pushing Machinist image to ECR..."
+	if ! docker push "$MACHINIST_IMAGE_URI"; then
+		error "Machinist Docker push failed"
+		return 1
+	fi
+
+	success "Platform images pushed: $ICC_IMAGE_URI, $MACHINIST_IMAGE_URI"
+}
+
 create_security_group_for_load_test() {
 	log "Creating security group for load_test instance..."
 
@@ -539,55 +696,38 @@ create_security_group_for_load_test() {
 
 	log "Using VPC from EKS cluster: $vpc_id"
 
-	local timestamp=$(date +%s)
-	local sg_name="load_test-sg-$timestamp"
+	local sg_name="benchmark-loadtest-$CLUSTER_NAME"
+
+	# Check if it already exists
+	local existing_sg
+	existing_sg=$(aws ec2 describe-security-groups \
+		--filters "Name=group-name,Values=$sg_name" "Name=vpc-id,Values=$vpc_id" \
+		--profile "$AWS_PROFILE" \
+		--query 'SecurityGroups[0].GroupId' \
+		--output text 2>/dev/null || echo "None")
+
+	if [[ -n "$existing_sg" && "$existing_sg" != "None" ]]; then
+		SECURITY_GROUP_ID="$existing_sg"
+		log "Security group already exists: $SECURITY_GROUP_ID"
+		return 0
+	fi
 
 	SECURITY_GROUP_ID=$(aws ec2 create-security-group \
 		--group-name "$sg_name" \
-		--description "Temporary security group for load_test instance" \
+		--description "Security group for benchmark load test" \
 		--vpc-id "$vpc_id" \
 		--query 'GroupId' \
 		--output text \
 		--profile "$AWS_PROFILE")
 
+	aws ec2 authorize-security-group-egress \
+		--group-id "$SECURITY_GROUP_ID" \
+		--protocol -1 \
+		--cidr 0.0.0.0/0 \
+		--profile "$AWS_PROFILE" 2>/dev/null || true
+
 	log "Created security group: $SECURITY_GROUP_ID"
 	success "Security group configured"
-}
-
-configure_node_security_for_nodeports() {
-	local node_ports=$1
-
-	log "Configuring node security groups for NodePort access..."
-
-	local node_sg=$(aws eks describe-cluster \
-		--name "$CLUSTER_NAME" \
-		--profile "$AWS_PROFILE" \
-		--query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' \
-		--output text)
-
-	if [[ -z "$node_sg" || "$node_sg" == "None" ]]; then
-		error "Could not get cluster security group"
-		return 1
-	fi
-
-	log "Cluster security group: $node_sg"
-
-	# Add ingress rules for each NodePort
-	IFS=',' read -ra PORTS <<< "$node_ports"
-	for port in "${PORTS[@]}"; do
-		log "Adding ingress rule for NodePort $port..."
-
-		AWS_PAGER="" aws ec2 authorize-security-group-ingress \
-			--group-id "$node_sg" \
-			--protocol tcp \
-			--port "$port" \
-			--source-group "$SECURITY_GROUP_ID" \
-			--profile "$AWS_PROFILE" 2>/dev/null || {
-			log "  (rule may already exist, continuing...)"
-		}
-	done
-
-	success "Node security configured for ports: $node_ports"
 }
 
 create_vpc_stack() {
@@ -767,6 +907,11 @@ EOF
 
 	aws iam attach-role-policy \
 		--policy-arn arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy \
+		--role-name "$role_name" \
+		--profile "$AWS_PROFILE"
+
+	aws iam attach-role-policy \
+		--policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy \
 		--role-name "$role_name" \
 		--profile "$AWS_PROFILE"
 
@@ -977,6 +1122,116 @@ wait_for_nodes() {
 	return 1
 }
 
+install_ebs_csi_driver() {
+	log "Installing EBS CSI driver with IRSA..."
+
+	# Create OIDC provider for the cluster (required for IRSA)
+	local oidc_url
+	oidc_url=$(aws eks describe-cluster \
+		--name "$CLUSTER_NAME" \
+		--profile "$AWS_PROFILE" \
+		--query 'cluster.identity.oidc.issuer' \
+		--output text)
+
+	local oidc_id="${oidc_url##*/}"
+
+	# Check if OIDC provider already exists
+	if ! aws iam list-open-id-connect-providers --profile "$AWS_PROFILE" \
+		--query "OpenIDConnectProviderList[?ends_with(Arn, '/${oidc_id}')]" \
+		--output text | grep -q "$oidc_id"; then
+
+		local oidc_host="oidc.eks.${AWS_REGION}.amazonaws.com"
+		local thumbprint
+		thumbprint=$(echo | openssl s_client -servername "$oidc_host" \
+			-connect "${oidc_host}:443" 2>/dev/null | \
+			openssl x509 -fingerprint -noout 2>/dev/null | \
+			cut -d '=' -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')
+
+		aws iam create-open-id-connect-provider \
+			--url "$oidc_url" \
+			--client-id-list sts.amazonaws.com \
+			--thumbprint-list "$thumbprint" \
+			--profile "$AWS_PROFILE" >/dev/null
+
+		log "OIDC provider created: $oidc_id"
+	fi
+
+	# Create IAM role for EBS CSI driver with IRSA trust policy
+	local ebs_role_name="eks-ebs-csi-role-$CLUSTER_NAME"
+	EBS_CSI_ROLE_NAME="$ebs_role_name"
+
+	local trust_policy
+	trust_policy=$(printf '{
+		"Version": "2012-10-17",
+		"Statement": [{
+			"Effect": "Allow",
+			"Principal": {
+				"Federated": "arn:aws:iam::%s:oidc-provider/oidc.eks.%s.amazonaws.com/id/%s"
+			},
+			"Action": "sts:AssumeRoleWithWebIdentity",
+			"Condition": {
+				"StringEquals": {
+					"oidc.eks.%s.amazonaws.com/id/%s:sub": "system:serviceaccount:kube-system:ebs-csi-controller-sa",
+					"oidc.eks.%s.amazonaws.com/id/%s:aud": "sts.amazonaws.com"
+				}
+			}
+		}]
+	}' "$AWS_ACCOUNT_ID" "$AWS_REGION" "$oidc_id" "$AWS_REGION" "$oidc_id" "$AWS_REGION" "$oidc_id")
+
+	aws iam create-role \
+		--role-name "$ebs_role_name" \
+		--assume-role-policy-document "$trust_policy" \
+		--profile "$AWS_PROFILE" >/dev/null
+
+	aws iam attach-role-policy \
+		--role-name "$ebs_role_name" \
+		--policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy \
+		--profile "$AWS_PROFILE"
+
+	local ebs_role_arn
+	ebs_role_arn=$(aws iam get-role \
+		--role-name "$ebs_role_name" \
+		--profile "$AWS_PROFILE" \
+		--query 'Role.Arn' --output text)
+
+	# Install the addon with the IRSA role
+	aws eks create-addon \
+		--cluster-name "$CLUSTER_NAME" \
+		--addon-name aws-ebs-csi-driver \
+		--service-account-role-arn "$ebs_role_arn" \
+		--profile "$AWS_PROFILE" >/dev/null
+
+	log "Waiting for EBS CSI driver to be active..."
+	local max_attempts=30
+	local retry_delay=10
+
+	for ((i = 1; i <= max_attempts; i++)); do
+		local status=$(aws eks describe-addon \
+			--cluster-name "$CLUSTER_NAME" \
+			--addon-name aws-ebs-csi-driver \
+			--profile "$AWS_PROFILE" \
+			--query 'addon.status' \
+			--output text 2>/dev/null || echo "CREATING")
+
+		if [[ "$status" == "ACTIVE" ]]; then
+			success "EBS CSI driver is active"
+			break
+		fi
+
+		if ((i % 3 == 0)); then
+			log "EBS CSI driver status: $status (attempt $i/$max_attempts)"
+		fi
+		sleep "$retry_delay"
+	done
+
+	# Set gp2 as default StorageClass
+	kubectl --context "$KUBE_CONTEXT" annotate storageclass gp2 \
+		storageclass.kubernetes.io/is-default-class=true \
+		--overwrite
+
+	success "EBS CSI driver installed and default StorageClass configured"
+}
+
 apply_framework_manifests() {
 	log "Applying $FRAMEWORK manifests from $KUBE_MANIFEST..."
 
@@ -1029,6 +1284,363 @@ wait_for_pods() {
 	error "Pods not ready after $((max_attempts * retry_delay)) seconds"
 	kubectl --context "$KUBE_CONTEXT" get pods --all-namespaces
 	return 1
+}
+
+# ============================================================================
+# HELM CHART INSTALLATION
+# ============================================================================
+
+install_helm_charts() {
+	log "Installing Helm charts for scaler benchmark..."
+
+	# Add Helm repos
+	helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ 2>/dev/null || true
+	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
+	helm repo add kedacore https://kedacore.github.io/charts 2>/dev/null || true
+	helm repo update
+
+	# Metrics Server (needed by HPA for CPU/memory metrics)
+	log "Installing Metrics Server..."
+	helm install metrics-server metrics-server/metrics-server \
+		--namespace kube-system \
+		--set 'args[0]=--kubelet-preferred-address-types=InternalIP' \
+		--set 'args[1]=--metric-resolution=15s' \
+		--kube-context "$KUBE_CONTEXT" \
+		--wait --timeout 5m
+
+	# Prometheus (needed by all scalers for metrics collection)
+	log "Installing kube-prometheus-stack..."
+	helm install prometheus prometheus-community/kube-prometheus-stack \
+		--version 65.3.2 \
+		--set alertmanager.enabled=false \
+		--set grafana.enabled=false \
+		--set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false \
+		--set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false \
+		--kube-context "$KUBE_CONTEXT" \
+		--wait --timeout 10m
+
+	# KEDA
+	log "Installing KEDA..."
+	helm install keda kedacore/keda \
+		--version 2.16.1 \
+		--kube-context "$KUBE_CONTEXT" \
+		--wait --timeout 5m
+
+	# PostgreSQL (for ICC)
+	log "Installing PostgreSQL..."
+	helm install postgres oci://registry-1.docker.io/cloudpirates/postgres \
+		--version 0.4.0 \
+		--set auth.password=postgres \
+		--kube-context "$KUBE_CONTEXT" \
+		--wait --timeout 5m
+
+	# Valkey (for ICC)
+	log "Installing Valkey..."
+	helm install valkey oci://registry-1.docker.io/cloudpirates/valkey \
+		--version 0.3.2 \
+		--set auth.password=default \
+		--kube-context "$KUBE_CONTEXT" \
+		--wait --timeout 5m
+
+	# Use hardcoded service names (helm chart creates postgres and valkey services)
+	local postgres_url="postgresql://postgres:postgres@postgres.default.svc.cluster.local:5432"
+	local valkey_url="redis://default:default@valkey.default.svc.cluster.local:6379"
+	local prometheus_url="http://prometheus-kube-prometheus-prometheus.default.svc.cluster.local:9090"
+
+	# Initialize ICC databases
+	log "Waiting for PostgreSQL pod to be ready..."
+	kubectl --context "$KUBE_CONTEXT" wait --for=condition=Ready pod/postgres-0 --timeout=120s
+
+	log "Creating ICC databases..."
+	for db in user_manager activities control_plane cold_storage risk_cold_storage cron compliance scaler trafficante traffic_inspector cluster_manager; do
+		kubectl --context "$KUBE_CONTEXT" exec postgres-0 -- psql -U postgres -c "CREATE DATABASE $db;" 2>&1 || true
+	done
+
+	# ICC + Machinist (Platformatic Helm chart)
+	log "Installing ICC + Machinist..."
+	kubectl --context "$KUBE_CONTEXT" create namespace platformatic 2>/dev/null || true
+
+	# Template the values file with discovered connection strings
+	local values_file="$PROJECT_ROOT/helm-values/platformatic.yaml"
+	local templated_values=$(mktemp)
+	# Parse ICC_IMAGE_URI and MACHINIST_IMAGE_URI into repo:tag
+	local icc_image_repo="${ICC_IMAGE_URI%:*}"
+	local icc_image_tag="${ICC_IMAGE_URI##*:}"
+	local machinist_image_repo="${MACHINIST_IMAGE_URI%:*}"
+	local machinist_image_tag="${MACHINIST_IMAGE_URI##*:}"
+
+	sed \
+		-e "s|POSTGRES_URL_PLACEHOLDER|${postgres_url}|g" \
+		-e "s|VALKEY_URL_PLACEHOLDER|${valkey_url}|g" \
+		-e "s|PROMETHEUS_URL_PLACEHOLDER|${prometheus_url}|g" \
+		-e "s|ICC_IMAGE_REPO_PLACEHOLDER|${icc_image_repo}|g" \
+		-e "s|ICC_IMAGE_TAG_PLACEHOLDER|${icc_image_tag}|g" \
+		-e "s|MACHINIST_IMAGE_REPO_PLACEHOLDER|${machinist_image_repo}|g" \
+		-e "s|MACHINIST_IMAGE_TAG_PLACEHOLDER|${machinist_image_tag}|g" \
+		"$values_file" > "$templated_values"
+
+	helm install platformatic oci://ghcr.io/platformatic/helm \
+		--version 4.0.2-alpha6 \
+		--namespace platformatic \
+		--values "$templated_values" \
+		--kube-context "$KUBE_CONTEXT" \
+		--wait --timeout 10m
+
+	rm -f "$templated_values"
+
+	success "All Helm charts installed"
+}
+
+# ============================================================================
+# SCALER MANAGEMENT
+# ============================================================================
+
+wait_for_icc_db() {
+	local expected=$1
+	log "Waiting for ICC DB max_pods=$expected..."
+	local elapsed=0
+	local timeout=70
+	while [[ $elapsed -lt $timeout ]]; do
+		local max_pods
+		max_pods=$(kubectl --context "$KUBE_CONTEXT" \
+			exec postgres-0 -- \
+			psql -U postgres -d scaler -t -A \
+			-c "SELECT max_pods FROM application_scale_configs ORDER BY created_at DESC LIMIT 1" \
+			2>/dev/null || echo "")
+		max_pods=$(echo "$max_pods" | tr -d '[:space:]')
+
+		if [[ "$max_pods" == "$expected" ]]; then
+			success "ICC DB synced (max_pods=$max_pods) after ${elapsed}s"
+			return 0
+		fi
+
+		log "  max_pods=$max_pods (waiting for $expected)... ${elapsed}s/${timeout}s"
+		sleep 5
+		elapsed=$((elapsed + 5))
+	done
+	error "ICC DB did not sync within ${timeout}s"
+	return 1
+}
+
+wait_for_icc_replicas() {
+	local expected=$1
+	log "Waiting for deployment to reach $expected replicas..."
+	local elapsed=0
+	local timeout=120
+	while [[ $elapsed -lt $timeout ]]; do
+		local ready
+		ready=$(kubectl --context "$KUBE_CONTEXT" get deployment next \
+			-o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+		ready=$(echo "$ready" | tr -d '[:space:]')
+		[[ -z "$ready" ]] && ready=0
+
+		if [[ "$ready" == "$expected" ]]; then
+			success "Deployment has $ready ready replicas after ${elapsed}s"
+			return 0
+		fi
+
+		log "  ready=$ready (waiting for $expected)... ${elapsed}s/${timeout}s"
+		sleep 5
+		elapsed=$((elapsed + 5))
+	done
+	error "Deployment did not reach $expected replicas within ${timeout}s"
+	return 1
+}
+
+wait_for_scaler() {
+	local scaler=$1
+
+	case "$scaler" in
+		hpa|keda)
+			log "Waiting 10s for $scaler to initialize..."
+			sleep 10
+			;;
+		icc)
+			wait_for_icc_db "$MAX_PODS"
+			wait_for_icc_replicas "$MIN_PODS"
+			;;
+	esac
+}
+
+disable_icc_scaling() {
+	log "Disabling ICC scaling..."
+	kubectl --context "$KUBE_CONTEXT" -n platformatic \
+		set env deployment/icc PLT_SCALER_SCALING_DISABLED=true
+	kubectl --context "$KUBE_CONTEXT" -n platformatic \
+		rollout status deployment/icc --timeout=120s
+}
+
+enable_icc_scaling() {
+	log "Enabling ICC scaling..."
+	kubectl --context "$KUBE_CONTEXT" -n platformatic \
+		set env deployment/icc PLT_SCALER_SCALING_DISABLED=false
+	kubectl --context "$KUBE_CONTEXT" -n platformatic \
+		rollout status deployment/icc --timeout=120s
+}
+
+apply_scaler_config() {
+	local scaler=$1
+	log "Applying scaler config: $scaler"
+
+	case "$scaler" in
+		hpa)
+			kubectl --context "$KUBE_CONTEXT" apply -f "$SCALERS_DIR/hpa.yaml"
+			;;
+		keda)
+			kubectl --context "$KUBE_CONTEXT" apply -f "$SCALERS_DIR/keda.yaml"
+			;;
+		icc)
+			# Set labels before enabling ICC so initial sync picks them up
+			log "Setting ICC labels to min=$MIN_PODS, max=$MAX_PODS..."
+			kubectl --context "$KUBE_CONTEXT" label deployment next \
+				icc.platformatic.dev/scaler-min="$MIN_PODS" \
+				icc.platformatic.dev/scaler-max="$MAX_PODS" \
+				--overwrite
+
+			enable_icc_scaling
+
+			wait_for_icc_db "$MAX_PODS"
+			wait_for_icc_replicas "$MIN_PODS"
+			;;
+	esac
+
+	success "Scaler config applied: $scaler"
+}
+
+remove_scaler_config() {
+	local scaler=$1
+	log "Removing scaler config: $scaler"
+
+	case "$scaler" in
+		hpa)
+			kubectl --context "$KUBE_CONTEXT" delete -f "$SCALERS_DIR/hpa.yaml" --ignore-not-found
+			reset_deployment
+			;;
+		keda)
+			kubectl --context "$KUBE_CONTEXT" delete -f "$SCALERS_DIR/keda.yaml" --ignore-not-found
+			reset_deployment
+			;;
+		icc)
+			kubectl --context "$KUBE_CONTEXT" label deployment next \
+				icc.platformatic.dev/scaler-min="$MIN_PODS" \
+				icc.platformatic.dev/scaler-max="$MIN_PODS" \
+				--overwrite
+			disable_icc_scaling
+			;;
+	esac
+
+	success "Scaler config removed: $scaler"
+}
+
+reset_deployment() {
+	log "Resetting deployment to $MIN_PODS replicas..."
+	kubectl --context "$KUBE_CONTEXT" scale deployment/next --replicas="$MIN_PODS"
+	kubectl --context "$KUBE_CONTEXT" rollout status deployment/next --timeout=120s
+	success "Deployment reset to $MIN_PODS replicas"
+}
+
+# ============================================================================
+# METRICS COLLECTION
+# ============================================================================
+
+# Start Prometheus port-forward in background
+start_prometheus_port_forward() {
+	log "Starting Prometheus port-forward..."
+
+	# Kill any existing port-forward on 9090
+	local existing_pid
+	existing_pid=$(lsof -ti :9090 2>/dev/null || true)
+	if [[ -n "$existing_pid" ]]; then
+		log "Killing existing process on port 9090 (PID: $existing_pid)"
+		kill $existing_pid 2>/dev/null || true
+		sleep 1
+	fi
+
+	kubectl --context "$KUBE_CONTEXT" port-forward \
+		svc/prometheus-kube-prometheus-prometheus 9090:9090 \
+		>/dev/null 2>&1 &
+	PORT_FORWARD_PID=$!
+	sleep 3
+
+	if ! kill -0 "$PORT_FORWARD_PID" 2>/dev/null; then
+		error "Prometheus port-forward failed to start"
+		return 1
+	fi
+
+	success "Prometheus port-forward started (PID: $PORT_FORWARD_PID)"
+}
+
+stop_prometheus_port_forward() {
+	if [[ -n "$PORT_FORWARD_PID" ]]; then
+		kill "$PORT_FORWARD_PID" 2>/dev/null || true
+		PORT_FORWARD_PID=""
+	fi
+}
+
+# Collect scaling metrics: pod count + ELU + CPU from Prometheus
+# Runs in background, writes CSV files
+# Args: scaler_name, output_dir, duration_seconds
+collect_metrics() {
+	local scaler=$1
+	local output_dir=$2
+	local duration=$3
+	local interval=5
+
+	local metrics_csv="$output_dir/${scaler}-metrics.csv"
+	echo "timestamp,avg_elu,hpa_cpu_pct" > "$metrics_csv"
+
+	local start_time=$(date +%s)
+	local end_time=$((start_time + duration))
+
+	while [[ $(date +%s) -lt $end_time ]]; do
+		local elu_response
+		local elu_ts="0" elu_val="0" cpu_pct="0"
+
+		# ELU from Prometheus
+		elu_response=$(curl -s -G 'http://localhost:9090/api/v1/query' \
+			--data-urlencode 'query=avg(nodejs_eventloop_utilization{pod=~"next.*"})' 2>/dev/null || echo "{}")
+		elu_ts=$(echo "$elu_response" | jq -r '.data.result[0].value[0] // 0' 2>/dev/null || echo "0")
+		elu_val=$(echo "$elu_response" | jq -r '.data.result[0].value[1] // "0"' 2>/dev/null || echo "0")
+
+		# CPU utilization from HPA status (what HPA actually uses for scaling decisions)
+		cpu_pct=$(kubectl --context "$KUBE_CONTEXT" get hpa next-hpa \
+			-o jsonpath='{.status.currentMetrics[?(@.resource.name=="cpu")].resource.current.averageUtilization}' 2>/dev/null || echo "0")
+		[[ -z "$cpu_pct" ]] && cpu_pct="0"
+
+		# Use Prometheus timestamp (unix epoch), convert to ISO 8601
+		local ts
+		if [[ "$elu_ts" != "0" ]]; then
+			ts=$(date -u -d "@${elu_ts%.*}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "${elu_ts%.*}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "0")
+		else
+			ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+		fi
+
+		echo "$ts,$elu_val,$cpu_pct" >> "$metrics_csv"
+
+		sleep "$interval"
+	done
+}
+
+start_replica_watch() {
+	local scaler=$1
+	local output_dir=$2
+	local pid_file="$output_dir/${scaler}-watch.pid"
+
+	local pods_csv="$output_dir/${scaler}-pods.csv"
+	echo "timestamp,replicas" > "$pods_csv"
+
+	(
+		local prev_replicas=""
+		kubectl --context "$KUBE_CONTEXT" get deployment next -w \
+			-o jsonpath='{.spec.replicas}{"\n"}' 2>/dev/null | \
+		while read -r replicas; do
+			if [[ "$replicas" != "$prev_replicas" ]]; then
+				echo "$(date -u +%Y-%m-%dT%H:%M:%SZ),$replicas" >> "$pods_csv"
+				prev_replicas="$replicas"
+			fi
+		done
+	) &
+	echo $! > "$pid_file"
 }
 
 # ============================================================================
@@ -1103,47 +1715,40 @@ show_pod_events() {
 }
 
 health_check_endpoints() {
-	local url_node=$1
-	local url_pm2=$2
-	local url_watt=$3
+	local url_app=$1
 
 	log "============================================================"
-	log "ENDPOINT HEALTH CHECKS"
+	log "ENDPOINT HEALTH CHECK"
 	log "============================================================"
 
-	for endpoint in "Node:$url_node" "PM2:$url_pm2" "Watt:$url_watt"; do
-		local name="${endpoint%%:*}"
-		local url="${endpoint#*:}"
+	log ""
+	log "--- App ($url_app) ---"
 
-		log ""
-		log "--- $name ($url) ---"
+	# Try multiple times with curl
+	local success_count=0
+	local total_time=0
 
-		# Try multiple times with curl
-		local success_count=0
-		local total_time=0
+	for i in {1..5}; do
+		local result=$(curl -s -o /dev/null -w "%{http_code},%{time_total}" --connect-timeout 5 --max-time 10 "$url_app/" 2>/dev/null || echo "000,0")
+		local http_code="${result%%,*}"
+		local time_sec="${result##*,}"
 
-		for i in {1..5}; do
-			local result=$(curl -s -o /dev/null -w "%{http_code},%{time_total}" --connect-timeout 5 --max-time 10 "$url/" 2>/dev/null || echo "000,0")
-			local http_code="${result%%,*}"
-			local time_sec="${result##*,}"
-
-			if [[ "$http_code" == "200" ]]; then
-				success_count=$((success_count + 1))
-				total_time=$(echo "$total_time + $time_sec" | bc)
-				log "  Request $i: HTTP $http_code (${time_sec}s)"
-			else
-				log "  Request $i: HTTP $http_code (FAILED)"
-			fi
-			sleep 0.5
-		done
-
-		if [[ $success_count -gt 0 ]]; then
-			local avg_time=$(echo "scale=3; $total_time / $success_count" | bc)
-			success "$name: $success_count/5 successful, avg response time: ${avg_time}s"
+		if [[ "$http_code" == "200" ]]; then
+			success_count=$((success_count + 1))
+			total_time=$(echo "$total_time + $time_sec" | bc)
+			log "  Request $i: HTTP $http_code (${time_sec}s)"
 		else
-			error "$name: All health checks failed!"
+			log "  Request $i: HTTP $http_code (FAILED)"
 		fi
+		sleep 0.5
 	done
+
+	if [[ $success_count -gt 0 ]]; then
+		local avg_time=$(echo "scale=3; $total_time / $success_count" | bc)
+		success "App: $success_count/5 successful, avg response time: ${avg_time}s"
+	else
+		error "App: All health checks failed!"
+	fi
 
 	log "============================================================"
 }
@@ -1170,12 +1775,10 @@ collect_pod_logs() {
 collect_all_pod_logs() {
 	log ""
 	log "########################################################################"
-	log "COLLECTING POD LOGS FROM ALL DEPLOYMENTS"
+	log "COLLECTING POD LOGS"
 	log "########################################################################"
 
 	collect_pod_logs "$FRAMEWORK" 50
-	collect_pod_logs "${FRAMEWORK}-pm2" 50
-	collect_pod_logs "${FRAMEWORK}-watt" 50
 }
 
 show_resource_usage() {
@@ -1309,42 +1912,11 @@ get_loadbalancer_url() {
 	echo "http://$hostname"
 }
 
-get_node_private_ip() {
-	log "Getting private IP of a cluster node..."
-
-	local node_ip=$(kubectl --context "$KUBE_CONTEXT" get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-
-	if [[ -z "$node_ip" ]]; then
-		error "Could not get node private IP"
-		kubectl --context "$KUBE_CONTEXT" get nodes -o wide
-		return 1
-	fi
-
-	log "Node private IP: $node_ip"
-	echo "$node_ip"
-}
-
-get_node_ports_list() {
-	local services=$1
-	echo "$services" | while read -r svc; do
-		echo "$svc" | cut -d: -f2
-	done | tr '\n' ',' | sed 's/,$//'
-}
-
-get_instance_ip() {
-	aws ec2 describe-instances \
-		--instance-ids "$1" \
-		--query 'Reservations[0].Instances[0].PublicIpAddress' \
-		--profile "$AWS_PROFILE" \
-		--output text
-}
-
 launch_load_test_instance() {
-	local url_node=$1
-	local url_pm2=$2
-	local url_watt=$3
+	local url_app=$1
+	local scaler_name=$2
 
-	log "Launching load_test EC2 instance..."
+	log "Launching load_test EC2 instance for scaler: $scaler_name..."
 
 	# Get a private subnet from the EKS cluster VPC (load_test needs to reach LoadBalancer endpoints)
 	local vpc_id=$(aws eks describe-cluster \
@@ -1369,7 +1941,6 @@ launch_load_test_instance() {
 
 	local load_test_script
 	load_test_script=$(cat "$FRAMEWORK_SOURCE_DIR/loadtest.sh")
-	# log "Loadtest script: $load_test_script"
 
 	# Create user data script for load_test instance
 	IFS='' read -r -d '' ac_user_script <<EOF || true
@@ -1415,10 +1986,9 @@ ulimit -n 1000000
 sysctl fs.file-max=2097152  # System-wide
 sysctl fs.nr_open=2097152
 
-echo 'Starting benchmark via LoadBalancers'
-export URL_NODE="$url_node"
-export URL_PM2="$url_pm2"
-export URL_WATT="$url_watt"
+echo 'Starting benchmark for scaler: $scaler_name'
+export URL_APP="$url_app"
+export SCALER_NAME="$scaler_name"
 export S3_BUCKET="$S3_BUCKET_NAME"
 export AWS_REGION="$AWS_REGION"
 
@@ -1427,31 +1997,17 @@ BENCHMARK_LOG="/var/log/benchmark-results.log"
 touch "\$BENCHMARK_LOG"
 chmod 644 "\$BENCHMARK_LOG"
 
-# Function to upload results to S3 (called after each test phase)
-upload_to_s3() {
-    local phase=\$1
-    echo "Uploading results to S3 after \$phase test..."
-    aws s3 cp "\$BENCHMARK_LOG" "s3://\$S3_BUCKET/benchmark-\$phase.log" --region "\$AWS_REGION" || echo "S3 upload failed for \$phase"
-    aws s3 cp "\$BENCHMARK_LOG" "s3://\$S3_BUCKET/benchmark-latest.log" --region "\$AWS_REGION" || echo "S3 upload failed for latest"
-}
-
-# Export the function so it's available in the loadtest script
-export -f upload_to_s3
-export BENCHMARK_LOG
-export S3_BUCKET
-export AWS_REGION
-
 # Run load test and capture output to both console and log file
 {
 $load_test_script
 } 2>&1 | tee -a "\$BENCHMARK_LOG"
 
-# Final upload after all tests complete
-upload_to_s3 "final"
+# Upload results to S3
+echo "Uploading results to S3..."
+aws s3 cp "\$BENCHMARK_LOG" "s3://\$S3_BUCKET/benchmark-\$SCALER_NAME.log" --region "\$AWS_REGION" || echo "S3 upload failed"
 
 echo 'Benchmark completed - instance will terminate'
-echo "Results saved to: \$BENCHMARK_LOG"
-echo "Results uploaded to: s3://\$S3_BUCKET/"
+echo "Results uploaded to: s3://\$S3_BUCKET/benchmark-\$SCALER_NAME.log"
 EOF
 
 	local ac_user_data=$(gzip_base64_encode "$ac_user_script")
@@ -1464,12 +2020,12 @@ EOF
 		--subnet-id "$subnet_id" \
 		--security-group-ids "$SECURITY_GROUP_ID" \
 		--iam-instance-profile Name="$LOADTEST_INSTANCE_PROFILE_NAME" \
-		--tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=benchmark-load_test}]" \
+		--tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=benchmark-load_test-$scaler_name}]" \
 		--query 'Instances[0].InstanceId' \
 		--output text \
 		--profile "$AWS_PROFILE")
 
-	success "load_test instance launched: $LOAD_TEST_INSTANCE_ID"
+	success "load_test instance launched: $LOAD_TEST_INSTANCE_ID (scaler: $scaler_name)"
 }
 
 parse_console_output() {
@@ -1518,6 +2074,7 @@ parse_console_output() {
 
 monitor_load_test() {
 	local instance_id=$1
+	local scaler_name=$2
 	local previous_output=""
 	local current_output=""
 	local all_output=""
@@ -1596,10 +2153,10 @@ monitor_load_test() {
 			local results_dir="$PROJECT_ROOT/results"
 			mkdir -p "$results_dir"
 			local timestamp=$(date +%Y%m%d-%H%M%S)
-			local results_file="$results_dir/${FRAMEWORK}-${timestamp}.log"
+			local results_file="$results_dir/${FRAMEWORK}-${scaler_name}-${timestamp}.log"
 
 			log "Downloading complete results from S3..."
-			if aws s3 cp "s3://$S3_BUCKET_NAME/benchmark-final.log" "$results_file" \
+			if aws s3 cp "s3://$S3_BUCKET_NAME/benchmark-${scaler_name}.log" "$results_file" \
 				--profile "$AWS_PROFILE" 2>/dev/null; then
 				success "Complete benchmark results downloaded from S3: $results_file"
 				log "File size: $(wc -c < "$results_file") bytes, $(wc -l < "$results_file") lines"
@@ -1654,8 +2211,8 @@ monitor_load_test() {
 
 main() {
 	log "########################################################################"
-	log "WATT BENCHMARK: Node vs PM2 vs Watt"
-	log "Framework: $FRAMEWORK"
+	log "SCALER BENCHMARK: HPA vs KEDA vs ICC"
+	log "Scalers: ${SCALERS[*]}"
 	log "Started at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	log "########################################################################"
 
@@ -1687,6 +2244,7 @@ main() {
 	save_resource "ecr" "repo_name" "$ECR_REPO_NAME"
 	save_resource "ecr" "repo_created" "$ECR_REPO_CREATED"
 	build_and_push_image
+	build_and_push_platform_images
 
 	# Create infrastructure
 	create_vpc_stack
@@ -1723,8 +2281,24 @@ main() {
 	save_resource "eks" "nodegroup_name" "${CLUSTER_NAME}-nodegroup"
 	wait_for_nodes
 
+	# Install EBS CSI driver for PersistentVolumeClaims (PostgreSQL, Valkey)
+	install_ebs_csi_driver
+	save_resource "iam" "ebs_csi_role_name" "$EBS_CSI_ROLE_NAME"
+
+	# Install Helm charts (Prometheus, KEDA, PostgreSQL, Valkey, ICC)
+	install_helm_charts
+
+	# Disable ICC scaling by default — only the ICC scaler test will enable it
+	disable_icc_scaling
+
+	# Deploy app and wait for it to be ready
 	apply_framework_manifests
 	wait_for_pods
+
+	# Deploy Envoy with slow start for gradual traffic ramp to new pods
+	log "Deploying Envoy slow-start proxy..."
+	kubectl --context "$KUBE_CONTEXT" apply -f "$PROJECT_ROOT/envoy-slowstart.yaml"
+	success "Envoy slow-start proxy deployed"
 
 	local services=$(find_annotated_loadbalancer_services)
 
@@ -1735,55 +2309,123 @@ main() {
 
 	wait_for_loadbalancer_hostnames "$services"
 
-	# Get LoadBalancer URLs for each service variant
-	local url_node=$(get_loadbalancer_url "$FRAMEWORK")
-	local url_pm2=$(get_loadbalancer_url "${FRAMEWORK}-pm2")
-	local url_watt=$(get_loadbalancer_url "${FRAMEWORK}-watt")
-
-	log "LoadBalancer URLs:"
-	log "  Node:  $url_node"
-	log "  PM2:   $url_pm2"
-	log "  Watt:  $url_watt"
+	local url_app=$(get_loadbalancer_url "envoy-lb")
+	log "LoadBalancer URL (via Envoy): $url_app"
 
 	# Run pre-benchmark diagnostics
 	pre_benchmark_diagnostics
 
-	# Health check all endpoints before load testing
-	health_check_endpoints "$url_node" "$url_pm2" "$url_watt"
+	# Health check endpoint before load testing
+	health_check_endpoints "$url_app"
 
 	create_security_group_for_load_test
 	save_resource "ec2" "security_group_id" "$SECURITY_GROUP_ID"
 
-	log ""
-	log "########################################################################"
-	log "STARTING LOAD TEST"
-	log "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-	log "########################################################################"
+	# Start Prometheus port-forward for local metrics collection
+	start_prometheus_port_forward
 
-	launch_load_test_instance "$url_node" "$url_pm2" "$url_watt"
-	save_resource "ec2" "load_test_instance_id" "$LOAD_TEST_INSTANCE_ID"
+	# Create results directory for metrics CSVs
+	local metrics_dir="$PROJECT_ROOT/results/${CLUSTER_NAME}"
+	mkdir -p "$metrics_dir"
 
-	log "Waiting for load_test instance to be running..."
-	aws ec2 wait instance-running \
-		--instance-ids "$LOAD_TEST_INSTANCE_ID" \
-		--profile "$AWS_PROFILE"
+	# Sequential scaler test loop
+	for scaler in "${SCALERS[@]}"; do
+		log ""
+		log "########################################################################"
+		log "TESTING SCALER: $scaler"
+		log "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+		log "########################################################################"
 
-	if ! monitor_load_test "$LOAD_TEST_INSTANCE_ID"; then
-		error "Load test failed! Running post-benchmark diagnostics..."
-		post_benchmark_diagnostics
-		exit 1
-	fi
+		# Reset deployment to 1 replica
+		reset_deployment
+
+		# Apply scaler config
+		apply_scaler_config "$scaler"
+
+		# Wait for scaler to be recognized
+		wait_for_scaler "$scaler"
+
+		# Start replica watch in background (captures exact scaling timestamps)
+		local watch_pid
+		start_replica_watch "$scaler" "$metrics_dir"
+		watch_pid=$(cat "$metrics_dir/${scaler}-watch.pid")
+
+		# Start metrics collection in background (collect for 5 minutes = load test 3m + margin)
+		collect_metrics "$scaler" "$metrics_dir" 300 &
+		local metrics_pid=$!
+
+		# Record load test start timestamp
+		date -u +%Y-%m-%dT%H:%M:%SZ > "$metrics_dir/${scaler}-loadtest-start.txt"
+
+		# Delete old results from S3 so monitor doesn't pick them up
+		aws s3 rm "s3://$S3_BUCKET_NAME/benchmark-${scaler}.log" \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
+
+		# Launch EC2 load test instance
+		launch_load_test_instance "$url_app" "$scaler"
+		save_resource "ec2" "load_test_instance_id" "$LOAD_TEST_INSTANCE_ID"
+
+		log "Waiting for load_test instance to be running..."
+		aws ec2 wait instance-running \
+			--instance-ids "$LOAD_TEST_INSTANCE_ID" \
+			--profile "$AWS_PROFILE"
+
+		if ! monitor_load_test "$LOAD_TEST_INSTANCE_ID" "$scaler"; then
+			error "Load test failed for scaler: $scaler"
+			kill "$metrics_pid" 2>/dev/null || true
+			wait "$metrics_pid" 2>/dev/null || true
+		else
+			# Wait for metrics collection to finish
+			wait "$metrics_pid" 2>/dev/null || true
+		fi
+
+		# Stop replica watch
+		pkill -P "$watch_pid" 2>/dev/null || true
+		kill "$watch_pid" 2>/dev/null || true
+		wait "$watch_pid" 2>/dev/null || true
+
+		# Upload metrics CSVs to S3
+		log "Uploading metrics to S3..."
+		aws s3 cp "$metrics_dir/${scaler}-pods.csv" "s3://$S3_BUCKET_NAME/${scaler}-pods.csv" \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
+		aws s3 cp "$metrics_dir/${scaler}-metrics.csv" "s3://$S3_BUCKET_NAME/${scaler}-metrics.csv" \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
+
+		# Terminate load test instance
+		if [[ -n "$LOAD_TEST_INSTANCE_ID" ]]; then
+			log "Terminating load test instance..."
+			aws ec2 terminate-instances \
+				--instance-ids "$LOAD_TEST_INSTANCE_ID" \
+				--profile "$AWS_PROFILE" >/dev/null 2>&1 || true
+			LOAD_TEST_INSTANCE_ID=""
+		fi
+
+		# Remove scaler config
+		remove_scaler_config "$scaler"
+
+		# Cooldown between scalers (skip after last one)
+		if [[ "$scaler" != "${SCALERS[-1]}" ]]; then
+			log "Cooldown: ${COOLDOWN_BETWEEN_SCALERS}s before next scaler..."
+			sleep "$COOLDOWN_BETWEEN_SCALERS"
+		fi
+
+		success "Scaler test complete: $scaler"
+	done
+
+	stop_prometheus_port_forward
 
 	# Run post-benchmark diagnostics
 	post_benchmark_diagnostics
 
 	log ""
 	log "########################################################################"
-	log "BENCHMARK COMPLETED"
+	log "ALL SCALER BENCHMARKS COMPLETED"
+	log "Results in: $metrics_dir"
+	log "Results in S3: s3://$S3_BUCKET_NAME/"
 	log "Finished at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	log "########################################################################"
 
-	success "Benchmark orchestration completed!"
+	success "Scaler benchmark orchestration completed!"
 }
 
 main "$@"
