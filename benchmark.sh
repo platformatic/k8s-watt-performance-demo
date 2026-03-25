@@ -23,8 +23,8 @@ AMI_ID="${AMI_ID:-ami-07b2b18045edffe90}" # Amazon Linux 2023 arm64
 LOADTESTING_INSTANCE_TYPE="${LOADTESTING_INSTANCE_TYPE:-c7gn.2xlarge}"
 ECR_REPO_NAME="${ECR_REPO_NAME:-watt-benchmark}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
-ICC_REPO="${ICC_REPO:-$HOME/projects/platformatic/icc-3}"
-MACHINIST_REPO="${MACHINIST_REPO:-$HOME/projects/platformatic/machinist}"
+ICC_REPO="${ICC_REPO:-}"
+MACHINIST_REPO="${MACHINIST_REPO:-}"
 S3_BUCKET_NAME=""
 
 # Scaler benchmark configuration (override with: SCALERS="hpa" ./benchmark.sh)
@@ -297,25 +297,38 @@ cleanup_instances() {
 		done
 	fi
 
+	# Delete orphaned EBS volumes tagged with this cluster
+	if [[ -n "$CLUSTER_NAME" ]]; then
+		log "Deleting orphaned EBS volumes for cluster: $CLUSTER_NAME"
+		local orphan_volumes
+		orphan_volumes=$(aws ec2 describe-volumes \
+			--filters "Name=status,Values=available" "Name=tag:Name,Values=*${CLUSTER_NAME}*" \
+			--profile "$AWS_PROFILE" \
+			--query 'Volumes[*].VolumeId' \
+			--output text 2>/dev/null || true)
+		for vol in $orphan_volumes; do
+			log "Deleting EBS volume: $vol"
+			aws ec2 delete-volume \
+				--volume-id "$vol" \
+				--profile "$AWS_PROFILE" 2>/dev/null || true
+		done
+	fi
+
 	# Delete IAM roles
 	if [[ -n "$NODE_ROLE_NAME" ]]; then
 		log "Deleting node IAM role: $NODE_ROLE_NAME"
-		aws iam detach-role-policy \
+		local node_policies
+		node_policies=$(aws iam list-attached-role-policies \
 			--role-name "$NODE_ROLE_NAME" \
-			--policy-arn arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy \
-			--profile "$AWS_PROFILE" 2>/dev/null || true
-		aws iam detach-role-policy \
-			--role-name "$NODE_ROLE_NAME" \
-			--policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly \
-			--profile "$AWS_PROFILE" 2>/dev/null || true
-		aws iam detach-role-policy \
-			--role-name "$NODE_ROLE_NAME" \
-			--policy-arn arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy \
-			--profile "$AWS_PROFILE" 2>/dev/null || true
-		aws iam detach-role-policy \
-			--role-name "$NODE_ROLE_NAME" \
-			--policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy \
-			--profile "$AWS_PROFILE" 2>/dev/null || true
+			--profile "$AWS_PROFILE" \
+			--query 'AttachedPolicies[*].PolicyArn' \
+			--output text 2>/dev/null || true)
+		for policy_arn in $node_policies; do
+			aws iam detach-role-policy \
+				--role-name "$NODE_ROLE_NAME" \
+				--policy-arn "$policy_arn" \
+				--profile "$AWS_PROFILE" 2>/dev/null || true
+		done
 		aws iam delete-role \
 			--role-name "$NODE_ROLE_NAME" \
 			--profile "$AWS_PROFILE" 2>/dev/null || true
@@ -483,15 +496,13 @@ validate_framework_manifests() {
 		return 1
 	fi
 
-	if [[ ! -f "$ICC_REPO/Dockerfile" ]]; then
+	if [[ -n "$ICC_REPO" && ! -f "$ICC_REPO/Dockerfile" ]]; then
 		error "ICC Dockerfile not found at: $ICC_REPO/Dockerfile"
-		error "Set ICC_REPO to the path of the ICC repository"
 		return 1
 	fi
 
-	if [[ ! -f "$MACHINIST_REPO/Dockerfile" ]]; then
+	if [[ -n "$MACHINIST_REPO" && ! -f "$MACHINIST_REPO/Dockerfile" ]]; then
 		error "Machinist Dockerfile not found at: $MACHINIST_REPO/Dockerfile"
-		error "Set MACHINIST_REPO to the path of the Machinist repository"
 		return 1
 	fi
 
@@ -622,6 +633,13 @@ build_and_push_image() {
 }
 
 build_and_push_platform_images() {
+	if [[ -z "$ICC_REPO" && -z "$MACHINIST_REPO" ]]; then
+		log "ICC_REPO and MACHINIST_REPO not set — using public images from Docker Hub"
+		ICC_IMAGE_URI="platformatic/intelligent-command-center:latest"
+		MACHINIST_IMAGE_URI="platformatic/machinist:latest"
+		return 0
+	fi
+
 	local ecr_base="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
 	# Create ECR repos for ICC and Machinist
@@ -1473,7 +1491,7 @@ disable_icc_scaling() {
 enable_icc_scaling() {
 	log "Enabling ICC scaling..."
 	kubectl --context "$KUBE_CONTEXT" -n platformatic \
-		set env deployment/icc PLT_SCALER_SCALING_DISABLED=false
+		set env deployment/icc PLT_SCALER_SCALING_DISABLED=false PLT_SIGNALS_SCALER_MIN_INIT_TIMEOUT_MS=30000
 	kubectl --context "$KUBE_CONTEXT" -n platformatic \
 		rollout status deployment/icc --timeout=120s
 }

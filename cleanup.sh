@@ -328,21 +328,39 @@ cleanup_from_state() {
 		done
 	fi
 
+	# Delete orphaned EBS volumes tagged with this cluster
+	if [[ -n "$STATE_CLUSTER_NAME" ]]; then
+		log "Deleting orphaned EBS volumes for cluster: $STATE_CLUSTER_NAME"
+		local volumes
+		volumes=$(aws ec2 describe-volumes \
+			--filters "Name=status,Values=available" "Name=tag:Name,Values=*${STATE_CLUSTER_NAME}*" \
+			--profile "$AWS_PROFILE" \
+			--query 'Volumes[*].VolumeId' \
+			--output text 2>/dev/null || true)
+		for vol in $volumes; do
+			log "Deleting EBS volume: $vol"
+			run_cmd aws ec2 delete-volume \
+				--volume-id "$vol" \
+				--profile "$AWS_PROFILE" 2>/dev/null || true
+		done
+	fi
+
 	# Delete node IAM role
 	if [[ -n "$STATE_NODE_ROLE_NAME" ]]; then
 		log "Deleting node IAM role: $STATE_NODE_ROLE_NAME"
-		run_cmd aws iam detach-role-policy \
+		# Detach all attached policies dynamically
+		local node_policies
+		node_policies=$(aws iam list-attached-role-policies \
 			--role-name "$STATE_NODE_ROLE_NAME" \
-			--policy-arn arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy \
-			--profile "$AWS_PROFILE" 2>/dev/null || true
-		run_cmd aws iam detach-role-policy \
-			--role-name "$STATE_NODE_ROLE_NAME" \
-			--policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly \
-			--profile "$AWS_PROFILE" 2>/dev/null || true
-		run_cmd aws iam detach-role-policy \
-			--role-name "$STATE_NODE_ROLE_NAME" \
-			--policy-arn arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy \
-			--profile "$AWS_PROFILE" 2>/dev/null || true
+			--profile "$AWS_PROFILE" \
+			--query 'AttachedPolicies[*].PolicyArn' \
+			--output text 2>/dev/null || true)
+		for policy_arn in $node_policies; do
+			run_cmd aws iam detach-role-policy \
+				--role-name "$STATE_NODE_ROLE_NAME" \
+				--policy-arn "$policy_arn" \
+				--profile "$AWS_PROFILE" 2>/dev/null || true
+		done
 		run_cmd aws iam delete-role \
 			--role-name "$STATE_NODE_ROLE_NAME" \
 			--profile "$AWS_PROFILE" 2>/dev/null || true
