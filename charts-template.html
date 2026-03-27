@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Autoscaler Benchmark Results</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 20px 40px; background: #f5f5f5; }
+  h1 { text-align: center; color: #333; margin-bottom: 40px; max-width: 1000px; margin-left: auto; margin-right: auto; }
+  h2 { color: #555; margin-top: 50px; border-bottom: 2px solid #ddd; padding-bottom: 8px; max-width: 1000px; margin-left: auto; margin-right: auto; }
+  .chart-container { background: white; border-radius: 8px; padding: 24px; margin: 20px auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 1000px; }
+  .chart-container canvas { height: 450px; }
+</style>
+</head>
+<body>
+<h1>Autoscaler Benchmark Results</h1>
+
+<script>
+const ELU_COLOR = '#7c3aed'; // purple
+const PODS_COLOR = '#10b981';
+const THRESHOLD_COLOR = 'rgba(220, 38, 38, 0.6)';
+const LOAD_COLOR = 'rgba(100,100,100,0.25)';
+const LOAD_FILL = 'rgba(100,100,100,0.05)';
+
+const SCALER_ORDER = ['icc', 'keda', 'hpa'];
+
+const LOAD_STAGES = [
+  {duration:30, target:10},
+  {duration:20, target:200},
+  {duration:20, target:300},
+  {duration:20, target:400},
+  {duration:20, target:500},
+  {duration:20, target:600},
+  {duration:20, target:700},
+  {duration:20, target:800},
+  {duration:90, target:800}
+];
+
+const TOTAL_DURATION_S = LOAD_STAGES.reduce((s, st) => s + st.duration, 0);
+
+function generateLoadCurve(k6StartMs) {
+  const points = [];
+  let elapsed = 0;
+  let prev = LOAD_STAGES[0].target;
+  for (const stage of LOAD_STAGES) {
+    const steps = Math.max(1, Math.floor(stage.duration / 2));
+    for (let i = 0; i <= steps; i++) {
+      const t = elapsed + (stage.duration * i / steps);
+      const rate = prev + (stage.target - prev) * (i / steps);
+      points.push({ x: t, y: rate });
+    }
+    elapsed += stage.duration;
+    prev = stage.target;
+  }
+  return points;
+}
+
+function formatElapsed(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m === 0) return s + 's';
+  if (s === 0) return m + 'm';
+  return m + 'm' + s + 's';
+}
+
+const DATA = __DATA__;
+
+for (const scaler of SCALER_ORDER) {
+  const d = DATA[scaler];
+  if (!d) continue;
+
+  const k6Start = d.k6Start ? new Date(d.k6Start).getTime() : null;
+  if (!k6Start) continue;
+
+  // Convert to relative seconds from k6 start
+  const eluPts = d.metrics
+    .filter(m => parseFloat(m.avg_elu) > 0.001)
+    .map(m => ({ x: (new Date(m.timestamp).getTime() - k6Start) / 1000, y: parseFloat(m.avg_elu) }))
+    .filter(p => p.x >= 0);
+
+  const podPts = d.pods
+    .map(p => ({ x: (new Date(p.timestamp).getTime() - k6Start) / 1000, y: parseInt(p.replicas) }))
+    .filter(p => p.x >= 0);
+
+  // Add initial pod count at t=0 from last value before k6 start
+  const lastBefore = d.pods
+    .map(p => ({ x: (new Date(p.timestamp).getTime() - k6Start) / 1000, y: parseInt(p.replicas) }))
+    .filter(p => p.x < 0)
+    .pop();
+  if (lastBefore) podPts.unshift({ x: 0, y: lastBefore.y });
+
+  if (!eluPts.length) continue;
+
+  const loadCurve = generateLoadCurve(k6Start);
+  const maxPods = Math.max(...podPts.map(p => p.y), 4) + 2;
+  const lastDataPoint = Math.max(
+    ...eluPts.map(p => p.x),
+    ...podPts.map(p => p.x),
+    TOTAL_DURATION_S
+  );
+  const xMax = Math.ceil((lastDataPoint + 15) / 30) * 30; // round up to next 30s
+
+  const id = scaler + 'Chart';
+  const label = scaler.toUpperCase();
+
+  document.write(
+    '<h2>' + label + '</h2>' +
+    '<div class="chart-container"><canvas id="' + id + '"></canvas></div>'
+  );
+
+  new Chart(document.getElementById(id), {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'ELU',
+          data: eluPts,
+          borderColor: ELU_COLOR,
+          borderWidth: 2.5,
+          pointRadius: 0,
+          tension: 0.3,
+          fill: false,
+          yAxisID: 'yElu'
+        },
+        {
+          label: 'Pods',
+          data: podPts,
+          borderColor: PODS_COLOR,
+          backgroundColor: 'rgba(16,185,129,0.08)',
+          borderWidth: 2.5,
+          pointRadius: 4,
+          pointBackgroundColor: PODS_COLOR,
+          stepped: 'before',
+          fill: true,
+          yAxisID: 'yPods'
+        },
+        {
+          label: 'Target req/s',
+          data: loadCurve,
+          borderColor: LOAD_COLOR,
+          backgroundColor: LOAD_FILL,
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: true,
+          yAxisID: 'yLoad'
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        title: {
+          display: true,
+          text: label + ': ELU + Pods + Traffic Load',
+          font: { size: 18, weight: 'bold' },
+          padding: { bottom: 16 }
+        },
+        legend: {
+          position: 'top',
+          labels: { usePointStyle: true, padding: 20, font: { size: 13 } }
+        },
+        annotation: {
+          annotations: {
+            eluThreshold: {
+              type: 'line',
+              yMin: 0.7,
+              yMax: 0.7,
+              yScaleID: 'yElu',
+              borderColor: THRESHOLD_COLOR,
+              borderWidth: 2,
+              borderDash: [6, 4],
+              label: {
+                display: true,
+                content: 'ELU Threshold (0.7)',
+                position: 'start',
+                backgroundColor: 'rgba(220, 38, 38, 0.75)',
+                color: '#fff',
+                font: { size: 11 },
+                padding: 4
+              }
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          min: 0,
+          max: xMax,
+          title: { display: true, text: 'Time', font: { size: 13 } },
+          ticks: {
+            stepSize: 30,
+            font: { size: 11 },
+            callback: function(val) { return formatElapsed(val); }
+          },
+          grid: { color: 'rgba(0,0,0,0.05)' }
+        },
+        yElu: {
+          type: 'linear',
+          position: 'left',
+          title: { display: true, text: 'ELU', font: { size: 13, weight: 'bold' } },
+          min: 0,
+          max: 1.0,
+          ticks: { stepSize: 0.1, font: { size: 11 } },
+          grid: { color: 'rgba(0,0,0,0.06)' }
+        },
+        yPods: {
+          type: 'linear',
+          position: 'right',
+          title: { display: true, text: 'Pods', font: { size: 13, weight: 'bold' } },
+          min: 0,
+          max: maxPods,
+          ticks: { stepSize: 1, font: { size: 11 } },
+          grid: { drawOnChartArea: false }
+        },
+        yLoad: {
+          type: 'linear',
+          display: false,
+          min: 0,
+          max: 1000
+        }
+      }
+    }
+  });
+}
+</script>
+</body>
+</html>

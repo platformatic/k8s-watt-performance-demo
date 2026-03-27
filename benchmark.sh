@@ -19,7 +19,7 @@ FRAMEWORK="next"
 FRAMEWORK_SOURCE_DIR="$PROJECT_ROOT/$FRAMEWORK"
 KUBE_MANIFEST="${FRAMEWORK_SOURCE_DIR}/kube.yaml"
 SCALERS_DIR="$PROJECT_ROOT/scalers"
-AMI_ID="${AMI_ID:-ami-07b2b18045edffe90}" # Amazon Linux 2023 arm64
+AMI_ID="${AMI_ID:-}" # Auto-detected if not set
 LOADTESTING_INSTANCE_TYPE="${LOADTESTING_INSTANCE_TYPE:-c7gn.2xlarge}"
 ECR_REPO_NAME="${ECR_REPO_NAME:-watt-benchmark}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
@@ -33,7 +33,7 @@ if [[ -n "${SCALERS:-}" ]]; then
 else
 	SCALERS=("icc" "keda" "hpa")
 fi
-COOLDOWN_BETWEEN_SCALERS="${COOLDOWN_BETWEEN_SCALERS:-120}"
+COOLDOWN_BETWEEN_SCALERS="${COOLDOWN_BETWEEN_SCALERS:-0}"
 MIN_PODS=4
 MAX_PODS=20
 PORT_FORWARD_PID=""
@@ -59,6 +59,7 @@ ECR_REPO_CREATED=""
 ICC_IMAGE_URI=""
 MACHINIST_IMAGE_URI=""
 EBS_CSI_ROLE_NAME=""
+OIDC_PROVIDER_ARN=""
 
 cleanup_instances() {
 	# Kill background processes
@@ -360,19 +361,11 @@ cleanup_instances() {
 	fi
 
 	# Delete OIDC provider
-	if [[ -n "$CLUSTER_NAME" ]]; then
-		local oidc_id
-		oidc_id=$(aws eks describe-cluster \
-			--name "$CLUSTER_NAME" \
-			--profile "$AWS_PROFILE" \
-			--query 'cluster.identity.oidc.issuer' \
-			--output text 2>/dev/null | awk -F/ '{print $NF}') || true
-		if [[ -n "$oidc_id" ]]; then
-			local oidc_arn="arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/oidc.eks.${AWS_REGION}.amazonaws.com/id/${oidc_id}"
-			aws iam delete-open-id-connect-provider \
-				--open-id-connect-provider-arn "$oidc_arn" \
-				--profile "$AWS_PROFILE" 2>/dev/null || true
-		fi
+	if [[ -n "$OIDC_PROVIDER_ARN" ]]; then
+		log "Deleting OIDC provider: $OIDC_PROVIDER_ARN"
+		aws iam delete-open-id-connect-provider \
+			--open-id-connect-provider-arn "$OIDC_PROVIDER_ARN" \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
 	fi
 
 	# Delete ECR repositories
@@ -548,6 +541,22 @@ setup_aws_info() {
 	fi
 
 	ECR_IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:${IMAGE_TAG}"
+
+	# Auto-detect AMI if not set
+	if [[ -z "$AMI_ID" ]]; then
+		log "Auto-detecting Amazon Linux 2023 ARM64 AMI..."
+		AMI_ID=$(aws ec2 describe-images \
+			--owners amazon \
+			--filters "Name=name,Values=al2023-ami-2023*-arm64" "Name=state,Values=available" \
+			--query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+			--output text \
+			--profile "$AWS_PROFILE")
+		if [[ -z "$AMI_ID" || "$AMI_ID" == "None" ]]; then
+			error "Could not find Amazon Linux 2023 ARM64 AMI in $AWS_REGION"
+			return 1
+		fi
+		log "Detected AMI: $AMI_ID"
+	fi
 
 	log "AWS Account: $AWS_ACCOUNT_ID"
 	log "AWS Region: $AWS_REGION"
@@ -1174,6 +1183,9 @@ install_ebs_csi_driver() {
 		log "OIDC provider created: $oidc_id"
 	fi
 
+	OIDC_PROVIDER_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/oidc.eks.${AWS_REGION}.amazonaws.com/id/${oidc_id}"
+	save_resource "iam" "oidc_provider_arn" "$OIDC_PROVIDER_ARN"
+
 	# Create IAM role for EBS CSI driver with IRSA trust policy
 	local ebs_role_name="eks-ebs-csi-role-$CLUSTER_NAME"
 	EBS_CSI_ROLE_NAME="$ebs_role_name"
@@ -1483,7 +1495,7 @@ wait_for_scaler() {
 disable_icc_scaling() {
 	log "Disabling ICC scaling..."
 	kubectl --context "$KUBE_CONTEXT" -n platformatic \
-		set env deployment/icc PLT_SCALER_SCALING_DISABLED=true
+		set env deployment/icc PLT_SCALER_SCALING_DISABLED=true PLT_SIGNALS_SCALER_INIT_TIMEOUT_MS=25000 PLT_SIGNALS_SCALER_MIN_HORIZON_MS=25000
 	kubectl --context "$KUBE_CONTEXT" -n platformatic \
 		rollout status deployment/icc --timeout=120s
 }
@@ -1491,7 +1503,7 @@ disable_icc_scaling() {
 enable_icc_scaling() {
 	log "Enabling ICC scaling..."
 	kubectl --context "$KUBE_CONTEXT" -n platformatic \
-		set env deployment/icc PLT_SCALER_SCALING_DISABLED=false PLT_SIGNALS_SCALER_MIN_INIT_TIMEOUT_MS=30000
+		set env deployment/icc PLT_SCALER_SCALING_DISABLED=false PLT_SIGNALS_SCALER_INIT_TIMEOUT_MS=25000 PLT_SIGNALS_SCALER_MIN_HORIZON_MS=25000
 	kubectl --context "$KUBE_CONTEXT" -n platformatic \
 		rollout status deployment/icc --timeout=120s
 }
@@ -2354,8 +2366,20 @@ main() {
 		log "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		log "########################################################################"
 
-		# Reset deployment to 1 replica
+		# Reset deployment to MIN_PODS replicas
 		reset_deployment
+
+		# Warm up pods to trigger JIT compilation before enabling scaler
+		# Use internal service URL since k6 runs inside the cluster
+		log "Warming up pods (30s k6 at 50 req/s)..."
+		kubectl --context "$KUBE_CONTEXT" run k6-warmup --rm -i \
+			--image=grafana/k6 --restart=Never -- run -e TARGET="http://envoy-lb:80" - \
+			< "$FRAMEWORK_SOURCE_DIR/warmup.js" || warning "Warmup had errors (non-critical)"
+		success "Pod warmup complete"
+
+		# Wait for ELU to settle back to idle before enabling scaler
+		log "Waiting 30s for metrics to settle..."
+		sleep 30
 
 		# Apply scaler config
 		apply_scaler_config "$scaler"
@@ -2368,8 +2392,8 @@ main() {
 		start_replica_watch "$scaler" "$metrics_dir"
 		watch_pid=$(cat "$metrics_dir/${scaler}-watch.pid")
 
-		# Start metrics collection in background (collect for 5 minutes = load test 3m + margin)
-		collect_metrics "$scaler" "$metrics_dir" 300 &
+		# Start metrics collection in background (collect for 10 minutes = EC2 boot ~3m + load test 4m20s + scale-down margin)
+		collect_metrics "$scaler" "$metrics_dir" 600 &
 		local metrics_pid=$!
 
 		# Record load test start timestamp
@@ -2390,12 +2414,11 @@ main() {
 
 		if ! monitor_load_test "$LOAD_TEST_INSTANCE_ID" "$scaler"; then
 			error "Load test failed for scaler: $scaler"
-			kill "$metrics_pid" 2>/dev/null || true
-			wait "$metrics_pid" 2>/dev/null || true
-		else
-			# Wait for metrics collection to finish
-			wait "$metrics_pid" 2>/dev/null || true
 		fi
+
+		# Stop metrics collection
+		kill "$metrics_pid" 2>/dev/null || true
+		wait "$metrics_pid" 2>/dev/null || true
 
 		# Stop replica watch
 		pkill -P "$watch_pid" 2>/dev/null || true
@@ -2422,7 +2445,8 @@ main() {
 		remove_scaler_config "$scaler"
 
 		# Cooldown between scalers (skip after last one)
-		if [[ "$scaler" != "${SCALERS[-1]}" ]]; then
+		local last_scaler="${SCALERS[${#SCALERS[@]}-1]}"
+		if [[ "$scaler" != "$last_scaler" ]]; then
 			log "Cooldown: ${COOLDOWN_BETWEEN_SCALERS}s before next scaler..."
 			sleep "$COOLDOWN_BETWEEN_SCALERS"
 		fi
@@ -2434,6 +2458,12 @@ main() {
 
 	# Run post-benchmark diagnostics
 	post_benchmark_diagnostics
+
+	# Generate charts
+	if [[ -x "$PROJECT_ROOT/generate-charts.sh" ]]; then
+		log "Generating charts..."
+		"$PROJECT_ROOT/generate-charts.sh" "$metrics_dir" || warning "Chart generation failed (non-critical)"
+	fi
 
 	log ""
 	log "########################################################################"

@@ -394,24 +394,12 @@ cleanup_from_state() {
 	fi
 
 	# Delete OIDC provider
-	if [[ -n "$STATE_CLUSTER_NAME" ]]; then
-		log "Deleting OIDC provider for cluster: $STATE_CLUSTER_NAME"
-		local oidc_id
-		oidc_id=$(aws eks describe-cluster \
-			--name "$STATE_CLUSTER_NAME" \
-			--profile "$AWS_PROFILE" \
-			--query 'cluster.identity.oidc.issuer' \
-			--output text 2>/dev/null | awk -F/ '{print $NF}') || true
-		if [[ -n "$oidc_id" && "$oidc_id" != "None" ]]; then
-			local account_id
-			account_id=$(aws sts get-caller-identity --profile "$AWS_PROFILE" --query 'Account' --output text 2>/dev/null) || true
-			local aws_region
-			aws_region=$(aws configure get region --profile "$AWS_PROFILE" 2>/dev/null || echo "${STATE_AWS_REGION:-us-east-1}")
-			local oidc_arn="arn:aws:iam::${account_id}:oidc-provider/oidc.eks.${aws_region}.amazonaws.com/id/${oidc_id}"
-			run_cmd aws iam delete-open-id-connect-provider \
-				--open-id-connect-provider-arn "$oidc_arn" \
-				--profile "$AWS_PROFILE" 2>/dev/null || true
-		fi
+	if [[ -n "$STATE_OIDC_PROVIDER_ARN" ]]; then
+		log "Deleting OIDC provider: $STATE_OIDC_PROVIDER_ARN"
+		run_cmd aws iam delete-open-id-connect-provider \
+			--open-id-connect-provider-arn "$STATE_OIDC_PROVIDER_ARN" \
+			--profile "$AWS_PROFILE" 2>/dev/null || true
+		[[ "$DRY_RUN" != "true" ]] && mark_resource_cleaned "iam" "oidc_provider_arn"
 	fi
 
 	# Delete ECR repositories (app + icc + machinist)

@@ -4,7 +4,7 @@ Compare autoscaler performance on Amazon EKS: **HPA** vs **KEDA** vs **ICC** (Pl
 
 ## Overview
 
-Runs a Next.js e-commerce app under Platformatic watt-extra and tests three Kubernetes autoscalers sequentially. Each scaler handles the same ramping load (10→800 req/s over 3.5 minutes) while the benchmark collects latency, error rate, scaling events, and ELU metrics.
+Runs a Next.js e-commerce app under Platformatic watt-extra and tests three Kubernetes autoscalers sequentially. Each scaler handles the same ramping load (10→800 req/s over 4m20s) while the benchmark collects latency, error rate, scaling events, and ELU metrics.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -91,7 +91,7 @@ This will:
 | `NODE_COUNT` | `4` | Number of worker nodes |
 | `SCALERS` | `icc keda hpa` | Space-separated list of scalers to test |
 | `COOLDOWN_BETWEEN_SCALERS` | `120` | Seconds between scaler tests |
-| `AMI_ID` | `ami-0d77ef7f6a82c86be` | Amazon Linux 2023 ARM64 AMI for k6 |
+| `AMI_ID` | _(auto-detected)_ | Amazon Linux 2023 ARM64 AMI for k6. Auto-detected per region if not set |
 | `LOADTESTING_INSTANCE_TYPE` | `c7gn.2xlarge` | EC2 instance type for k6 |
 | `ECR_REPO_NAME` | `watt-benchmark` | ECR repository name |
 | `IMAGE_TAG` | `latest` | Docker image tag |
@@ -138,7 +138,7 @@ The k6 test (`next/loadtest.sh`) runs from a dedicated EC2 instance:
 
 - **Warmup**: 30s at 10 req/s (JIT warmup)
 - **Ramp**: 20s stages from 200→800 req/s
-- **Sustained**: 40s at 800 req/s
+- **Sustained**: 90s at 800 req/s
 - **Scenarios**: Homepage (20%), Search (25%), Card detail (20%), Game detail (15%), Games list (10%), Sellers (5%), Set detail (5%)
 - `noConnectionReuse: true` — simulates real user connections
 

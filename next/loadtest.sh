@@ -20,7 +20,7 @@ echo "SCALER: ${SCALER_NAME:-unknown}"
 echo ""
 echo "Test Parameters:"
 echo "  - Rate: 1000 req/s constant"
-echo "  - Duration: 3 minutes"
+echo "  - Duration: 4 minutes 20 seconds"
 echo "  - Scenarios: Homepage, Search, Card Detail, Game Browse, Sellers"
 echo "========================================================================"
 
@@ -99,7 +99,7 @@ export const options = {
         { duration: '20s', target: 600 },
         { duration: '20s', target: 700 },
         { duration: '20s', target: 800 },
-        { duration: '40s', target: 800 },
+        { duration: '90s', target: 800 },
       ],
     },
   },
