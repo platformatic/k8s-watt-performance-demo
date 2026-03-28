@@ -1,0 +1,17 @@
+{
+  "name": "nuxt-benchmark",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "start": "node .output/server/index.mjs",
+    "start:node": "node .output/server/index.mjs"
+  },
+  "dependencies": {
+    "nuxt": "^3.17.5"
+  },
+  "devDependencies": {
+    "@nuxtjs/tailwindcss": "^6.14.0"
+  }
+}

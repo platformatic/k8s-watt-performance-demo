@@ -112,8 +112,11 @@ run_benchmark() {
 
 run_benchmark "next.js" "bench-next" "$DOCKER_DIR/Dockerfile.next"
 run_benchmark "tanstack-start" "bench-tanstack" "$DOCKER_DIR/Dockerfile.tanstack"
+run_benchmark "nuxt" "bench-nuxt" "$DOCKER_DIR/Dockerfile.nuxt"
+run_benchmark "sveltekit" "bench-svelte" "$DOCKER_DIR/Dockerfile.svelte"
 run_benchmark "vertz-bun" "bench-vertz-bun" "$DOCKER_DIR/Dockerfile.vertz-bun"
 run_benchmark "vertz-node" "bench-vertz-node" "$DOCKER_DIR/Dockerfile.vertz-node"
+run_benchmark "hono" "bench-hono" "$DOCKER_DIR/Dockerfile.hono"
 
 # ── Results Table ──
 
@@ -128,7 +131,7 @@ printf "%-18s %8s %8s %8s %8s %8s %8s %8s\n" \
 printf "%-18s %8s %8s %8s %8s %8s %8s %8s\n" \
   "-----------------" "-------" "-------" "-------" "-------" "-------" "-------" "-------"
 
-for fw in "next.js" "tanstack-start" "vertz-bun" "vertz-node"; do
+for fw in "next.js" "tanstack-start" "nuxt" "sveltekit" "vertz-bun" "vertz-node" "hono"; do
   sum_avg=0; sum_med=0; sum_p90=0; sum_p95=0; sum_rps=0; sum_errors=0; sum_iters=0
   count=0
 

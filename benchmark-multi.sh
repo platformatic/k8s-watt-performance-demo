@@ -97,6 +97,21 @@ run_benchmark "vertz-node" 3004 \
   "node server-node.mjs" \
   "$REPO_DIR/vertz"
 
+# ── Nuxt ──
+run_benchmark "nuxt" 3005 \
+  "node .output/server/index.mjs" \
+  "$REPO_DIR/nuxt"
+
+# ── SvelteKit ──
+
+# ── Hono ──
+run_benchmark "hono" 3007 \
+  "node dist/server.js" \
+  "$REPO_DIR/hono"
+run_benchmark "sveltekit" 3006 \
+  "node build/index.js" \
+  "$REPO_DIR/svelte"
+
 echo ""
 echo "=========================================="
 echo "  RESULTS"
@@ -108,7 +123,7 @@ printf "%-18s %8s %8s %8s %8s %8s %8s %8s\n" \
 printf "%-18s %8s %8s %8s %8s %8s %8s %8s\n" \
   "-----------------" "-------" "-------" "-------" "-------" "-------" "-------" "-------"
 
-for fw in "next.js" "tanstack-start" "vertz-bun" "vertz-node"; do
+for fw in "next.js" "tanstack-start" "vertz-bun" "vertz-node" "nuxt" "sveltekit" "hono"; do
   sum_avg=0; sum_med=0; sum_p90=0; sum_p95=0; sum_rps=0; sum_errors=0; sum_reqs=0
   count=0
 
