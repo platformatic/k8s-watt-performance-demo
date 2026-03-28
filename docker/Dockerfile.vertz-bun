@@ -1,0 +1,10 @@
+FROM oven/bun:latest
+WORKDIR /app
+COPY vertz/dist dist
+COPY vertz/data data
+COPY vertz/server.ts server.ts
+COPY vertz/node_modules node_modules
+COPY vertz/package.json package.json
+ENV NODE_ENV=production
+EXPOSE 3000
+CMD ["bun", "run", "server.ts"]

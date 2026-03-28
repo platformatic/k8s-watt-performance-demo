@@ -1,0 +1,22 @@
+{
+  "name": "vertz-benchmark",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vertz dev --port 3000",
+    "build": "vertz build",
+    "start:bun": "bun run server.ts",
+    "start:node": "NODE_ENV=production node server-node.mjs"
+  },
+  "dependencies": {
+    "@vertz/cli": "^0.2.38",
+    "@vertz/theme-shadcn": "^0.2.38",
+    "@vertz/ui": "^0.2.38",
+    "@vertz/ui-compiler": "^0.2.38",
+    "@vertz/ui-server": "^0.2.38"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.2"
+  }
+}

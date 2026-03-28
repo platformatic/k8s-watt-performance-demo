@@ -1,0 +1,15 @@
+{
+  "name": "hono-workerd-benchmark",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "workerd serve config.capnp"
+  },
+  "dependencies": {
+    "hono": "^4.7.11"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}
