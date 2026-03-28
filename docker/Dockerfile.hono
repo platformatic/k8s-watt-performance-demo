@@ -1,0 +1,7 @@
+FROM node:25-slim
+WORKDIR /app
+COPY hono/dist/server.js server.js
+COPY hono/data data
+ENV NODE_ENV=production
+EXPOSE 3000
+CMD ["node", "server.js"]

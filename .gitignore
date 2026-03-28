@@ -12,6 +12,9 @@ ECOMMERCE_ANALYSIS.md
 .next/
 build/
 out/
+.wrangler/
+.nuxt/
+nuxt/.nuxt/
 
 # Profile data
 *.pb
@@ -23,3 +26,12 @@ out/
 
 # Benchmark state (cleanup recovery)
 .benchmark-state/
+
+# Large generated data files
+**/data/listings.json
+**/data/cards.json
+**/data-bundle.js
+
+# SvelteKit build artifacts
+.svelte-kit/
+svelte/.svelte-kit/

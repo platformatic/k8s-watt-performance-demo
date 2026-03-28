@@ -2,7 +2,6 @@ import { createServer } from 'node:http';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { resolve, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Readable } from 'node:stream';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const clientDir = resolve(__dirname, 'dist', 'client');
@@ -16,8 +15,9 @@ if (existsSync(vertzCssPath)) {
   inlineCSS['/assets/vertz.css'] = readFileSync(vertzCssPath, 'utf-8');
 }
 
-const { createSSRHandler } = await import('@vertz/ui-server');
-const handler = createSSRHandler({ module: ssrModule, template, inlineCSS });
+// Direct Node adapter — no Web Request/Response bridging
+const { createNodeHandler } = await import('@vertz/ui-server/node');
+const handler = createNodeHandler({ module: ssrModule, template, inlineCSS });
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -72,7 +72,7 @@ function serveStatic(pathname, res) {
 
 const port = parseInt(process.env.PORT || '3000');
 
-const server = createServer(async (req, res) => {
+const server = createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
 
@@ -92,34 +92,8 @@ const server = createServer(async (req, res) => {
     if (serveStatic(pathname, res)) return;
   }
 
-  try {
-    const webRequest = new Request(url.href, {
-      method: req.method,
-      headers: req.headers,
-    });
-
-    const webResponse = await handler(webRequest);
-
-    const headers = {};
-    webResponse.headers.forEach((value, key) => {
-      headers[key] = value;
-    });
-    res.writeHead(webResponse.status, headers);
-
-    // Stream the body instead of buffering with .text()
-    if (webResponse.body) {
-      const nodeStream = Readable.fromWeb(webResponse.body);
-      nodeStream.pipe(res);
-    } else {
-      res.end();
-    }
-  } catch (err) {
-    console.error('[SSR] Render failed:', err.message || err);
-    if (!res.headersSent) {
-      res.writeHead(500, { 'Content-Type': 'text/plain' });
-    }
-    res.end('Internal Server Error');
-  }
+  // Direct Node handler — writes to res directly, no Web API conversion
+  handler(req, res);
 });
 
 server.listen(port, '0.0.0.0', () => {
