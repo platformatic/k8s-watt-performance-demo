@@ -103,14 +103,14 @@ run_benchmark "nuxt" 3005 \
   "$REPO_DIR/nuxt"
 
 # ── SvelteKit ──
-
-# ── Hono ──
-run_benchmark "hono" 3007 \
-  "node dist/server.js" \
-  "$REPO_DIR/hono"
 run_benchmark "sveltekit" 3006 \
   "node build/index.js" \
   "$REPO_DIR/svelte"
+
+# ── Hono + Preact (SSR with hydration) ──
+run_benchmark "hono-preact" 3007 \
+  "node dist/server.js" \
+  "$REPO_DIR/hono-preact"
 
 echo ""
 echo "=========================================="
@@ -123,7 +123,7 @@ printf "%-18s %8s %8s %8s %8s %8s %8s %8s\n" \
 printf "%-18s %8s %8s %8s %8s %8s %8s %8s\n" \
   "-----------------" "-------" "-------" "-------" "-------" "-------" "-------" "-------"
 
-for fw in "next.js" "tanstack-start" "vertz-bun" "vertz-node" "nuxt" "sveltekit" "hono"; do
+for fw in "next.js" "tanstack-start" "vertz-bun" "vertz-node" "nuxt" "sveltekit" "hono-preact"; do
   sum_avg=0; sum_med=0; sum_p90=0; sum_p95=0; sum_rps=0; sum_errors=0; sum_reqs=0
   count=0
 

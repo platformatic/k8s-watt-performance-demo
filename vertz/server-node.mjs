@@ -15,9 +15,85 @@ if (existsSync(vertzCssPath)) {
   inlineCSS['/assets/vertz.css'] = readFileSync(vertzCssPath, 'utf-8');
 }
 
+// Load AOT manifest
+const { loadAotManifest } = await import('@vertz/ui-server');
+const serverDir = resolve(__dirname, 'dist', 'server');
+const aotManifest = await loadAotManifest(serverDir);
+
+// Load DB for AOT data resolver
+const { db } = await import('./src/lib/db.ts');
+await db.initialize();
+
 // Direct Node adapter — no Web Request/Response bridging
 const { createNodeHandler } = await import('@vertz/ui-server/node');
-const handler = createNodeHandler({ module: ssrModule, template, inlineCSS });
+const handler = createNodeHandler({
+  module: ssrModule,
+  template,
+  inlineCSS,
+  aotManifest: aotManifest ?? undefined,
+  aotDataResolver: async (pattern, params, unresolvedKeys, searchParams) => {
+    const data = new Map();
+
+    if (pattern === '/') {
+      const [games, trending, releases] = await Promise.all([
+        unresolvedKeys.includes('home-games') ? db.getGames() : null,
+        unresolvedKeys.includes('home-trending') ? db.getTrendingCards(8) : null,
+        unresolvedKeys.includes('home-releases') ? db.getNewReleaseSets(4) : null,
+      ]);
+      if (games !== null) data.set('home-games', games);
+      if (trending !== null) data.set('home-trending', trending);
+      if (releases !== null) data.set('home-releases', releases);
+    } else if (pattern === '/games') {
+      if (unresolvedKeys.includes('games')) data.set('games', await db.getGames());
+    } else if (pattern === '/games/:slug') {
+      const key = `game-${params.slug}`;
+      if (unresolvedKeys.includes(key)) data.set(key, await db.getGameWithSets(params.slug));
+    } else if (pattern === '/cards/:id') {
+      const key = `card-${params.id}`;
+      if (unresolvedKeys.includes(key)) {
+        const card = await db.getCardWithListings(params.id);
+        if (card) {
+          const [sellers, sets, games] = await Promise.all([db.getSellers(), db.getSets(), db.getGames()]);
+          const set = sets.find((s) => s.id === card.setId);
+          const game = games.find((g) => g.id === card.gameId);
+          data.set(key, { ...card, sellers, set, game });
+        }
+      }
+    } else if (pattern === '/sellers') {
+      if (unresolvedKeys.includes('sellers')) {
+        const sellers = await db.getSellers();
+        data.set('sellers', [...sellers].sort((a, b) => b.rating - a.rating));
+      }
+    } else if (pattern === '/sellers/:slug') {
+      const page = parseInt(searchParams?.get('page') || '1');
+      const sellerKey = `seller-${params.slug}-${page}`;
+      if (unresolvedKeys.includes(sellerKey)) {
+        const seller = await db.getSellerWithListings(params.slug, page, 20);
+        if (seller) {
+          const cards = await db.findMany('cards', seller.listings.map((l) => l.cardId));
+          data.set(sellerKey, { ...seller, cards });
+        }
+      }
+    } else if (pattern === '/sets/:slug') {
+      const page = parseInt(searchParams?.get('page') || '1');
+      const setKey = `set-${params.slug}-${page}`;
+      if (unresolvedKeys.includes(setKey)) {
+        data.set(setKey, await db.getSetWithCards(params.slug, page, 24));
+      }
+    } else if (pattern === '/search') {
+      const q = searchParams?.get('q') || undefined;
+      const game = searchParams?.get('game') || undefined;
+      const sort = searchParams?.get('sort') || undefined;
+      const order = (searchParams?.get('order') || 'asc');
+      const page = parseInt(searchParams?.get('page') || '1');
+      const searchKey = `search-${q}-${game}-${sort}-${order}-${page}`;
+      if (unresolvedKeys.includes('search-games')) data.set('search-games', await db.getGames());
+      if (unresolvedKeys.includes(searchKey)) data.set(searchKey, await db.searchCards({ q, game, sort, order, page, limit: 24 }));
+    }
+
+    return data;
+  },
+});
 
 const MIME_TYPES = {
   '.html': 'text/html',
