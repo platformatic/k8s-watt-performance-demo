@@ -2,22 +2,32 @@
 
 # E-commerce Load Test Script
 # Tests realistic e-commerce scenarios: homepage, search, card details, game browsing, sellers
+# Sweep: Node and Watt runtimes, each with useNodeStreams OFF and ON.
 # Produces verbose output for debugging
 
 set -e
 
-# Ensure LoadBalancer URLs are set
-if [ -z "$URL_NODE" ] || [ -z "$URL_PM2" ] || [ -z "$URL_WATT" ]; then
-  echo "Error: URL_NODE, URL_PM2, and URL_WATT environment variables must be set"
+# Ensure LoadBalancer URLs are set (4 variants in a single sweep)
+if [ -z "$URL_NODE" ] || [ -z "$URL_NODE_STREAM" ] || [ -z "$URL_WATT" ] || [ -z "$URL_WATT_STREAM" ]; then
+  echo "Error: URL_NODE, URL_NODE_STREAM, URL_WATT, and URL_WATT_STREAM environment variables must be set"
   exit 1
 fi
 
+# Variants tested in order: "Label|URL|s3-phase-tag"
+VARIANTS=(
+  "Node (streams OFF)|$URL_NODE|node-off"
+  "Node (streams ON)|$URL_NODE_STREAM|node-on"
+  "Watt (streams OFF)|$URL_WATT|watt-off"
+  "Watt (streams ON)|$URL_WATT_STREAM|watt-on"
+)
+
 echo "========================================================================"
-echo "E-COMMERCE LOAD TEST CONFIGURATION"
+echo "E-COMMERCE LOAD TEST CONFIGURATION (useNodeStreams sweep)"
 echo "========================================================================"
-echo "URL_NODE: $URL_NODE"
-echo "URL_PM2:  $URL_PM2"
-echo "URL_WATT: $URL_WATT"
+echo "URL_NODE:        $URL_NODE        (Node, useNodeStreams OFF)"
+echo "URL_NODE_STREAM: $URL_NODE_STREAM (Node, useNodeStreams ON)"
+echo "URL_WATT:        $URL_WATT        (Watt, useNodeStreams OFF)"
+echo "URL_WATT_STREAM: $URL_WATT_STREAM (Watt, useNodeStreams ON)"
 echo ""
 echo "Test Parameters:"
 echo "  - Initial NLB warm-up: 60s per endpoint (10->500 req/s ramp)"
@@ -64,9 +74,10 @@ check_endpoint() {
   return 1
 }
 
-check_endpoint "PM2" "$URL_PM2/"
-check_endpoint "Watt" "$URL_WATT/"
-check_endpoint "Node" "$URL_NODE/"
+for variant in "${VARIANTS[@]}"; do
+  IFS='|' read -r v_name v_url v_phase <<< "$variant"
+  check_endpoint "$v_name" "$v_url/"
+done
 
 echo "========================================================================"
 
@@ -281,9 +292,10 @@ echo ""
 echo "========================================================================"
 echo "PHASE 1: NLB WARM-UP (ALL ENDPOINTS)"
 echo "========================================================================"
-run_warmup "PM2" "$URL_PM2"
-run_warmup "Watt" "$URL_WATT"
-run_warmup "Node" "$URL_NODE"
+for variant in "${VARIANTS[@]}"; do
+  IFS='|' read -r v_name v_url v_phase <<< "$variant"
+  run_warmup "$v_name" "$v_url"
+done
 
 echo ""
 echo "========================================================================"
@@ -291,45 +303,42 @@ echo "NLB warm-up complete. Waiting 60s before starting tests..."
 echo "========================================================================"
 sleep 60
 
-# Phase 2: Run load tests
+# Phase 2: Run load tests sequentially for each variant.
+# Repeat the whole 4-variant sequence REPEATS times (interleaved) so run-to-run
+# drift is spread evenly across all arms, then average offline to bound noise.
+REPEATS="${REPEATS:-1}"
 echo ""
 echo "========================================================================"
-echo "PHASE 2: E-COMMERCE LOAD TESTS"
+echo "PHASE 2: E-COMMERCE LOAD TESTS (${REPEATS} repeat(s), interleaved)"
 echo "========================================================================"
 
-# Test PM2 first
-run_ecommerce_test "PM2" "$URL_PM2"
+num_variants=${#VARIANTS[@]}
+for round in $(seq 1 "$REPEATS"); do
+  echo ""
+  echo "########################################################################"
+  echo "ROUND ${round}/${REPEATS}"
+  echo "########################################################################"
 
-# Upload results to S3 after PM2 test (if function is available)
-if type upload_to_s3 &>/dev/null; then
-  upload_to_s3 "pm2"
-fi
+  for idx in "${!VARIANTS[@]}"; do
+    IFS='|' read -r v_name v_url v_phase <<< "${VARIANTS[$idx]}"
 
-echo ""
-echo "Cooldown: 480s before next test..."
-sleep 480
+    run_ecommerce_test "$v_name (round ${round}/${REPEATS})" "$v_url"
 
-# Test Watt
-run_ecommerce_test "Watt" "$URL_WATT"
+    # Upload results to S3 after each test, tagged by variant and round.
+    if type upload_to_s3 &>/dev/null; then
+      upload_to_s3 "${v_phase}-r${round}"
+    fi
 
-# Upload results to S3 after Watt test (if function is available)
-if type upload_to_s3 &>/dev/null; then
-  upload_to_s3 "watt"
-fi
-
-echo ""
-echo "Cooldown: 480s before next test..."
-sleep 480
-
-# Test Node
-run_ecommerce_test "Node" "$URL_NODE"
-
-# Upload results to S3 after Node test (if function is available)
-if type upload_to_s3 &>/dev/null; then
-  upload_to_s3 "node"
-fi
+    # Cooldown before the next test, unless this is the very last test overall.
+    if [[ $round -lt $REPEATS || $((idx + 1)) -lt $num_variants ]]; then
+      echo ""
+      echo "Cooldown: 480s before next test..."
+      sleep 480
+    fi
+  done
+done
 
 echo ""
 echo "========================================================================"
-echo "ALL E-COMMERCE LOAD TESTS COMPLETE"
+echo "ALL E-COMMERCE LOAD TESTS COMPLETE (${REPEATS} round(s))"
 echo "========================================================================"
