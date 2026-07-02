@@ -20,7 +20,7 @@
     "wattpm": "^3.39.0"
   },
   "devDependencies": {
-    "@platformatic/flame": "^1.4.0",
+    "@platformatic/flame": "^1.6.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^22",
     "@types/react": "^19",
