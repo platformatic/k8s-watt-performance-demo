@@ -23,3 +23,6 @@ out/
 
 # Benchmark state (cleanup recovery)
 .benchmark-state/
+
+# Flamegraph HTML outputs (large, interactive; .md summaries are tracked)
+flamegraphs/*.html
