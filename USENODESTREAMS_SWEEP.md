@@ -6,6 +6,58 @@ The impact of Next.js **node streams vs web streams** for app-router SSR, under
 the local EKS benchmark, for both the **Node** and **Watt** runtimes — collected
 in a single sweep.
 
+---
+
+## Active sweep: version comparison — `16.2.9` vs `16.3.0-canary.72` (Node)
+
+`benchmark.sh` is currently wired for a **two-version comparison** on the Node
+runtime, not the streams A/B (the streams results below are prior findings):
+
+| Cell | Version | Streams | Service |
+| ---- | ------- | ------- | ------- |
+| stable | `16.2.9` (latest stable) | web (no node-streams path) | `next-stable` |
+| latest | `16.3.0-canary.72` (latest canary) | node (baked on, no toggle) | `next-latest` |
+
+It builds one image per version (`--build-arg NEXT_VERSION`), deploys both as
+Node, and load-tests each `REPEATS` times interleaved. Run:
+
+```sh
+AWS_PROFILE=<profile> ./benchmark.sh
+# override: NEXT_VERSION_STABLE=16.2.9 NEXT_VERSION_LATEST=16.3.0-canary.72 REPEATS=3
+```
+
+**What it can and cannot conclude.** The stable→latest delta is the real-world
+upgrade, but it **bundles the version change with the streams switch** (stable is
+web-only; latest is node-only — neither can toggle). To read it as *mostly
+version*, lean on the clean streams result below (`canary.45` A/B → streams ≈ no
+effect on 16.3). Isolating streams in *this* run is not possible without a
+toggle-capable version (`≤ canary.45`).
+
+### Results — version comparison
+
+Run on 2026-07-01 (`results/next-20260701-144702.log`), `REPEATS=3`, Node.
+Mean of the 3 interleaved rounds per version.
+
+| Version (streams)             | Success Rate | Avg (ms) | Median (ms) | p(90) (ms) | p(95) (ms) | p(99) (ms) | Max (ms) | Goodput |
+| ----------------------------- | ------------ | -------- | ----------- | ---------- | ---------- | ---------- | -------- | ------- |
+| `16.2.9` stable (web)         | 56.3%        | 7,567    | 3,652       | 10,061     | 37,361     | 49,949     | 52,157   | 399/s   |
+| `16.3.0-canary.72` (node)     | 58.1%        | 7,445    | 3,400       | 10,058     | 38,435     | 50,478     | 52,794   | 420/s   |
+
+**Δ latest vs stable:** goodput **+5.3%** (399→420/s), success **+1.8 pp**, median
+**−6.9%** — all exceed 1 round-to-round σ. Avg and the whole tail (p90/p95/p99/max)
+are **within noise** (flat). So a real but **small** improvement; the tail does not
+move.
+
+**This debunks the apparent "huge" 16.2→16.3 gain** from the earlier April-vs-June
+cross-run comparison (p90 31s→10s, tail ~halved). That was almost entirely a
+harness/deps **confound**, not Next: today's `16.2.9` baseline already shows
+p90 ≈ 10,061 ms / p99 ≈ 49,949 / max ≈ 52,157, versus April's `16.2.1-canary.27`
+at p90 ≈ 31,000 / p99 ≈ 73,000 / max ≈ 76,000 — the same 16.2 line, tail collapsed,
+with **no Next change**. Controlled, 16.2→16.3 is worth ~5% goodput and a slightly
+faster median, nothing more.
+
+---
+
 ## Design: same-version A/B (clean), pinned to `16.3.0-canary.45`
 
 `experimental.useNodeStreams` is a real config toggle only for a window of
@@ -77,15 +129,34 @@ rounds offline to bound the high-variance tail metrics.
 
 ## Results — clean A/B (`16.3.0-canary.45`, OFF vs ON)
 
-_To be filled in after running the same-version sweep described above
-(`REPEATS=3`). Average the three rounds per arm before comparing._
+Run on 2026-06-30 (`results/next-20260630-125524.log`), `REPEATS=3` interleaved.
+Values below are the **mean of the 3 rounds** per variant (180s @ target 1,000
+req/s each). Goodput = successful requests / 180s.
 
-| Runtime / Streams  | Success Rate | Avg (ms) | Median (ms) | p(90) (ms) | p(95) (ms) | p(99) (ms) | Max (ms) | Successful reqs |
-| ------------------ | ------------ | -------- | ----------- | ---------- | ---------- | ---------- | -------- | --------------- |
-| Node — streams OFF |              |          |             |            |            |            |          |                 |
-| Node — streams ON  |              |          |             |            |            |            |          |                 |
-| Watt — streams OFF |              |          |             |            |            |            |          |                 |
-| Watt — streams ON  |              |          |             |            |            |            |          |                 |
+| Runtime / Streams  | Success Rate | Avg (ms) | Median (ms) | p(90) (ms) | p(95) (ms) | p(99) (ms) | Max (ms) | Goodput |
+| ------------------ | ------------ | -------- | ----------- | ---------- | ---------- | ---------- | -------- | ------- |
+| Node — streams OFF | 59.2%        | 7,101    | 3,225       | 10,025     | 36,137     | 48,260     | 50,961   | 433/s   |
+| Node — streams ON  | 59.1%        | 6,845    | 3,256       | 10,003     | 29,304     | 46,649     | 49,477   | 437/s   |
+| Watt — streams OFF | 61.3%        | 6,789    | 2,755       | 10,007     | 35,174     | 48,442     | 50,657   | 452/s   |
+| Watt — streams ON  | 59.6%        | 7,347    | 2,892       | 11,652     | 41,034     | 50,172     | 52,866   | 442/s   |
+
+### Verdict: no meaningful effect under this (saturated) load
+
+Averaged over 3 rounds, every OFF↔ON gap is **within the round-to-round noise**:
+
+- Per-variant p95 noise is ±3,000–7,700 ms (3–8 s). The OFF↔ON p95 gaps
+  (Node −6.8 s, Watt +5.9 s) are ~1 pooled σ — not robust at n=3.
+- The bulk is identical across all four: p(90) ~10.0 s, median ~3 s, success
+  ~59–61%, goodput 433–452/s.
+- The only two gaps that exceed 1 σ — Node p(95) (better ON) and Watt avg
+  (worse ON) — point in **opposite** streams-favorability directions, and they
+  also **contradict the version-based first attempt** (Watt better / Node worse).
+  Disagreeing signs across experiments indicate noise, not a real effect.
+
+Conclusion: on `16.3.0-canary.45`, toggling node-streams vs web-streams does not
+move throughput or latency for either Node or Watt at 1,000 req/s. This differs
+from the clean April A/B on `16.2.1-canary.27` (large consistent tail wins) — a
+different Next version; the flag's measurable impact did not survive into 16.3.
 
 ## Results — first attempt (version-based, confounded)
 

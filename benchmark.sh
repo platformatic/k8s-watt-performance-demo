@@ -22,12 +22,14 @@ AMI_ID="${AMI_ID:-ami-07b2b18045edffe90}" # Amazon Linux 2023 arm64
 LOADTESTING_INSTANCE_TYPE="${LOADTESTING_INSTANCE_TYPE:-c7gn.2xlarge}"
 ECR_REPO_NAME="${ECR_REPO_NAME:-watt-benchmark}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
-# useNodeStreams A/B: both images are built from ONE Next.js version that still
-# supports the experimental.useNodeStreams toggle (<= 16.3.0-canary.45). The OFF
-# and ON images differ only by the baked flag, isolating the streams change.
-NEXT_VERSION="${NEXT_VERSION:-16.3.0-canary.45}"
-# Repeat the full 4-variant test sequence this many times (interleaved) to bound
-# run-to-run tail-latency noise. Each repeat adds ~45min of load testing.
+# Version comparison sweep: one image per Next.js version, Node runtime.
+# STABLE = latest stable 16.2 (web streams); LATEST = latest canary 16.3
+# (node streams, baked permanently on). The delta bundles version + the
+# streams switch; see USENODESTREAMS_SWEEP.md for how to attribute it.
+NEXT_VERSION_STABLE="${NEXT_VERSION_STABLE:-16.2.9}"
+NEXT_VERSION_LATEST="${NEXT_VERSION_LATEST:-16.3.0-canary.72}"
+# Repeat the full test sequence this many times (interleaved) to bound
+# run-to-run tail-latency noise. Each repeat adds ~25min of load testing.
 REPEATS="${REPEATS:-3}"
 S3_BUCKET_NAME=""  # Will be set dynamically with cluster name
 
@@ -47,8 +49,8 @@ LOAD_TEST_INSTANCE_ID=""
 SECURITY_GROUP_ID=""
 AWS_ACCOUNT_ID=""
 AWS_REGION=""
-ECR_IMAGE_URI_OFF=""
-ECR_IMAGE_URI_ON=""
+ECR_IMAGE_URI_STABLE=""
+ECR_IMAGE_URI_LATEST=""
 ECR_REPO_CREATED=""
 
 cleanup_instances() {
@@ -446,15 +448,15 @@ setup_aws_info() {
 		return 1
 	fi
 
-	# Two images for the useNodeStreams sweep: one with the flag baked OFF,
-	# one with it baked ON. Both live in the same ECR repo under distinct tags.
-	ECR_IMAGE_URI_OFF="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:${IMAGE_TAG}-off"
-	ECR_IMAGE_URI_ON="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:${IMAGE_TAG}-on"
+	# Two images for the version comparison: one per Next.js version. Both live
+	# in the same ECR repo under distinct tags.
+	ECR_IMAGE_URI_STABLE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:${IMAGE_TAG}-stable"
+	ECR_IMAGE_URI_LATEST="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:${IMAGE_TAG}-latest"
 
 	log "AWS Account: $AWS_ACCOUNT_ID"
 	log "AWS Region: $AWS_REGION"
-	log "ECR Image (streams OFF): $ECR_IMAGE_URI_OFF"
-	log "ECR Image (streams ON):  $ECR_IMAGE_URI_ON"
+	log "ECR Image (stable next@${NEXT_VERSION_STABLE}): $ECR_IMAGE_URI_STABLE"
+	log "ECR Image (latest next@${NEXT_VERSION_LATEST}): $ECR_IMAGE_URI_LATEST"
 
 	success "AWS info retrieved"
 }
@@ -500,14 +502,14 @@ create_ecr_repository() {
 	success "ECR repository created"
 }
 
-# Build and push one image variant: same Next.js version, useNodeStreams baked.
-# Args: <image-uri> <image-tag> <0|1 use-node-streams>
+# Build and push one image variant pinned to a specific Next.js version.
+# Args: <image-uri> <image-tag> <next-version>
 build_and_push_variant() {
 	local image_uri=$1
 	local image_tag=$2
-	local use_node_streams=$3
+	local next_version=$3
 
-	log "Building Docker image for linux/amd64 (next@${NEXT_VERSION}, useNodeStreams=${use_node_streams})..."
+	log "Building Docker image for linux/amd64 (next@${next_version})..."
 	log "Building framework: $FRAMEWORK"
 	log "This may take a few minutes..."
 
@@ -515,18 +517,17 @@ build_and_push_variant() {
 		--platform linux/amd64 \
 		--build-arg COMMIT_HASH="$(git rev-parse HEAD 2>/dev/null || echo 'unknown')" \
 		--build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		--build-arg NEXT_VERSION="${NEXT_VERSION}" \
-		--build-arg NEXT_USE_NODE_STREAMS="${use_node_streams}" \
+		--build-arg NEXT_VERSION="${next_version}" \
 		-t "$image_uri" \
 		"$FRAMEWORK_SOURCE_DIR"; then
-		error "Docker build failed (useNodeStreams=${use_node_streams})"
+		error "Docker build failed (next@${next_version})"
 		return 1
 	fi
 
 	log "Pushing image to ECR: $image_uri"
 
 	if ! docker push "$image_uri"; then
-		error "Docker push failed (useNodeStreams=${use_node_streams})"
+		error "Docker push failed (next@${next_version})"
 		return 1
 	fi
 
@@ -540,23 +541,14 @@ build_and_push_variant() {
 		return 1
 	fi
 
-	success "Image pushed and verified: $image_uri (useNodeStreams=${use_node_streams})"
+	success "Image pushed and verified: $image_uri (next@${next_version})"
 }
 
 build_and_push_image() {
-	# Clean same-version A/B: both images from next@${NEXT_VERSION}, flag is the
-	# only difference. Fails fast if the version no longer supports the toggle.
-	case "$NEXT_VERSION" in
-		16.2.*|16.3.0-canary.[0-9]|16.3.0-canary.[1-3][0-9]|16.3.0-canary.4[0-5]) ;;
-		*)
-			warning "next@${NEXT_VERSION} may not support experimental.useNodeStreams"
-			warning "The toggle was removed in 16.3.0-canary.46 (node streams permanently on)."
-			warning "Use a version <= 16.3.0-canary.45 for a valid OFF/ON comparison."
-			;;
-	esac
-	log "useNodeStreams A/B on next@${NEXT_VERSION}: OFF (web streams) vs ON (node streams)"
-	build_and_push_variant "$ECR_IMAGE_URI_OFF" "${IMAGE_TAG}-off" "0" || return 1
-	build_and_push_variant "$ECR_IMAGE_URI_ON" "${IMAGE_TAG}-on" "1" || return 1
+	# Version comparison: build one image per Next.js version from the same source.
+	log "Version comparison: stable next@${NEXT_VERSION_STABLE} vs latest next@${NEXT_VERSION_LATEST}"
+	build_and_push_variant "$ECR_IMAGE_URI_STABLE" "${IMAGE_TAG}-stable" "$NEXT_VERSION_STABLE" || return 1
+	build_and_push_variant "$ECR_IMAGE_URI_LATEST" "${IMAGE_TAG}-latest" "$NEXT_VERSION_LATEST" || return 1
 }
 
 create_security_group_for_load_test() {
@@ -1016,10 +1008,9 @@ wait_for_nodes() {
 apply_framework_manifests() {
 	log "Applying $FRAMEWORK manifests from $KUBE_MANIFEST..."
 
-	# Template the manifest with the two ECR image URIs (streams OFF / ON).
-	# Replace the more specific placeholders before the generic one.
-	sed -e "s|IMAGE_PLACEHOLDER_OFF|${ECR_IMAGE_URI_OFF}|g" \
-		-e "s|IMAGE_PLACEHOLDER_ON|${ECR_IMAGE_URI_ON}|g" \
+	# Template the manifest with the two ECR image URIs (stable / latest version).
+	sed -e "s|IMAGE_STABLE|${ECR_IMAGE_URI_STABLE}|g" \
+		-e "s|IMAGE_LATEST|${ECR_IMAGE_URI_LATEST}|g" \
 		"$KUBE_MANIFEST" | \
 		kubectl --context "$KUBE_CONTEXT" apply -f -
 
@@ -1142,16 +1133,14 @@ show_pod_events() {
 }
 
 health_check_endpoints() {
-	local url_node=$1
-	local url_node_stream=$2
-	local url_watt=$3
-	local url_watt_stream=$4
+	local url_stable=$1
+	local url_latest=$2
 
 	log "============================================================"
 	log "ENDPOINT HEALTH CHECKS"
 	log "============================================================"
 
-	for endpoint in "Node-OFF:$url_node" "Node-ON:$url_node_stream" "Watt-OFF:$url_watt" "Watt-ON:$url_watt_stream"; do
+	for endpoint in "stable:$url_stable" "latest:$url_latest"; do
 		local name="${endpoint%%:*}"
 		local url="${endpoint#*:}"
 
@@ -1213,10 +1202,8 @@ collect_all_pod_logs() {
 	log "COLLECTING POD LOGS FROM ALL DEPLOYMENTS"
 	log "########################################################################"
 
-	collect_pod_logs "$FRAMEWORK" 50
-	collect_pod_logs "${FRAMEWORK}-stream" 50
-	collect_pod_logs "${FRAMEWORK}-watt" 50
-	collect_pod_logs "${FRAMEWORK}-watt-stream" 50
+	collect_pod_logs "${FRAMEWORK}-stable" 50
+	collect_pod_logs "${FRAMEWORK}-latest" 50
 }
 
 show_resource_usage() {
@@ -1381,10 +1368,8 @@ get_instance_ip() {
 }
 
 launch_load_test_instance() {
-	local url_node=$1
-	local url_node_stream=$2
-	local url_watt=$3
-	local url_watt_stream=$4
+	local url_stable=$1
+	local url_latest=$2
 
 	log "Launching load_test EC2 instance..."
 
@@ -1458,10 +1443,8 @@ sysctl fs.file-max=2097152  # System-wide
 sysctl fs.nr_open=2097152
 
 echo 'Starting benchmark via LoadBalancers'
-export URL_NODE="$url_node"
-export URL_NODE_STREAM="$url_node_stream"
-export URL_WATT="$url_watt"
-export URL_WATT_STREAM="$url_watt_stream"
+export URL_STABLE="$url_stable"
+export URL_LATEST="$url_latest"
 export REPEATS="$REPEATS"
 export S3_BUCKET="$S3_BUCKET_NAME"
 export AWS_REGION="$AWS_REGION"
@@ -1565,12 +1548,12 @@ monitor_load_test() {
 	local previous_output=""
 	local current_output=""
 	local all_output=""
-	# Scale the wait with REPEATS: the load test runs 4 variants per round, each
+	# Scale the wait with REPEATS: the load test runs 2 variants per round, each
 	# ~260s of work + 480s cooldown (~820s with overhead), plus a fixed budget for
 	# EC2 boot, k6 install and the NLB warm-up phase. A fixed 1h timeout would
-	# falsely declare failure (and tear down the cluster) for REPEATS > 1.
+	# falsely declare failure (and tear down the cluster) for larger REPEATS.
 	local repeats="${REPEATS:-1}"
-	local max_wait_seconds=$(( 1800 + repeats * 4 * 820 ))
+	local max_wait_seconds=$(( 1800 + repeats * 2 * 820 ))
 	local elapsed=0
 	local check_interval=10
 
@@ -1703,7 +1686,7 @@ monitor_load_test() {
 
 main() {
 	log "########################################################################"
-	log "WATT BENCHMARK: useNodeStreams sweep (Node OFF/ON, Watt OFF/ON)"
+	log "NEXT BENCHMARK: version comparison (stable ${NEXT_VERSION_STABLE} vs latest ${NEXT_VERSION_LATEST}, Node)"
 	log "Framework: $FRAMEWORK"
 	log "Started at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	log "########################################################################"
@@ -1784,23 +1767,19 @@ main() {
 
 	wait_for_loadbalancer_hostnames "$services"
 
-	# Get LoadBalancer URLs for each service variant (useNodeStreams sweep)
-	local url_node=$(get_loadbalancer_url "$FRAMEWORK")
-	local url_node_stream=$(get_loadbalancer_url "${FRAMEWORK}-stream")
-	local url_watt=$(get_loadbalancer_url "${FRAMEWORK}-watt")
-	local url_watt_stream=$(get_loadbalancer_url "${FRAMEWORK}-watt-stream")
+	# Get LoadBalancer URLs for each version variant (version comparison sweep)
+	local url_stable=$(get_loadbalancer_url "${FRAMEWORK}-stable")
+	local url_latest=$(get_loadbalancer_url "${FRAMEWORK}-latest")
 
 	log "LoadBalancer URLs:"
-	log "  Node (streams OFF): $url_node"
-	log "  Node (streams ON):  $url_node_stream"
-	log "  Watt (streams OFF): $url_watt"
-	log "  Watt (streams ON):  $url_watt_stream"
+	log "  stable (next@${NEXT_VERSION_STABLE}): $url_stable"
+	log "  latest (next@${NEXT_VERSION_LATEST}): $url_latest"
 
 	# Run pre-benchmark diagnostics
 	pre_benchmark_diagnostics
 
 	# Health check all endpoints before load testing
-	health_check_endpoints "$url_node" "$url_node_stream" "$url_watt" "$url_watt_stream"
+	health_check_endpoints "$url_stable" "$url_latest"
 
 	create_security_group_for_load_test
 	save_resource "ec2" "security_group_id" "$SECURITY_GROUP_ID"
@@ -1811,7 +1790,7 @@ main() {
 	log "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	log "########################################################################"
 
-	launch_load_test_instance "$url_node" "$url_node_stream" "$url_watt" "$url_watt_stream"
+	launch_load_test_instance "$url_stable" "$url_latest"
 	save_resource "ec2" "load_test_instance_id" "$LOAD_TEST_INSTANCE_ID"
 
 	log "Waiting for load_test instance to be running..."

@@ -2,20 +2,16 @@ FROM node:24.11.0-alpine
 
 ARG COMMIT_HASH
 ARG BUILD_TIME
-# Pin the Next.js version. The clean same-version A/B builds both images from one
-# version that still supports the experimental.useNodeStreams toggle
-# (<= 16.3.0-canary.45). Empty = use the version pinned in package.json.
+# Pin the Next.js version for this image. The version comparison sweep builds one
+# image per version (16.2.9 stable vs 16.3.0-canary.72 latest). Empty = use the
+# version pinned in package.json.
 ARG NEXT_VERSION=""
-# Toggle experimental.useNodeStreams (read by next.config.mjs). Baked at build
-# time: define-env replaces __NEXT_USE_NODE_STREAMS in the compiled output.
-ARG NEXT_USE_NODE_STREAMS=0
 
 WORKDIR /app
 
 COPY . ./
 
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV NEXT_USE_NODE_STREAMS=${NEXT_USE_NODE_STREAMS}
 
 RUN npm install npm -g
 

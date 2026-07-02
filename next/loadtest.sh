@@ -2,32 +2,28 @@
 
 # E-commerce Load Test Script
 # Tests realistic e-commerce scenarios: homepage, search, card details, game browsing, sellers
-# Sweep: Node and Watt runtimes, each with useNodeStreams OFF and ON.
+# Sweep: Node runtime, comparing two Next.js versions (stable 16.2 vs latest 16.3 canary).
 # Produces verbose output for debugging
 
 set -e
 
-# Ensure LoadBalancer URLs are set (4 variants in a single sweep)
-if [ -z "$URL_NODE" ] || [ -z "$URL_NODE_STREAM" ] || [ -z "$URL_WATT" ] || [ -z "$URL_WATT_STREAM" ]; then
-  echo "Error: URL_NODE, URL_NODE_STREAM, URL_WATT, and URL_WATT_STREAM environment variables must be set"
+# Ensure LoadBalancer URLs are set (2 version variants in a single sweep)
+if [ -z "$URL_STABLE" ] || [ -z "$URL_LATEST" ]; then
+  echo "Error: URL_STABLE and URL_LATEST environment variables must be set"
   exit 1
 fi
 
 # Variants tested in order: "Label|URL|s3-phase-tag"
 VARIANTS=(
-  "Node (streams OFF)|$URL_NODE|node-off"
-  "Node (streams ON)|$URL_NODE_STREAM|node-on"
-  "Watt (streams OFF)|$URL_WATT|watt-off"
-  "Watt (streams ON)|$URL_WATT_STREAM|watt-on"
+  "Next stable (web streams)|$URL_STABLE|stable"
+  "Next latest (node streams)|$URL_LATEST|latest"
 )
 
 echo "========================================================================"
-echo "E-COMMERCE LOAD TEST CONFIGURATION (useNodeStreams sweep)"
+echo "E-COMMERCE LOAD TEST CONFIGURATION (version comparison)"
 echo "========================================================================"
-echo "URL_NODE:        $URL_NODE        (Node, useNodeStreams OFF)"
-echo "URL_NODE_STREAM: $URL_NODE_STREAM (Node, useNodeStreams ON)"
-echo "URL_WATT:        $URL_WATT        (Watt, useNodeStreams OFF)"
-echo "URL_WATT_STREAM: $URL_WATT_STREAM (Watt, useNodeStreams ON)"
+echo "URL_STABLE: $URL_STABLE (Node, latest stable 16.2 - web streams)"
+echo "URL_LATEST: $URL_LATEST (Node, latest canary 16.3 - node streams)"
 echo ""
 echo "Test Parameters:"
 echo "  - Initial NLB warm-up: 60s per endpoint (10->500 req/s ramp)"
