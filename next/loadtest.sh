@@ -12,6 +12,27 @@ if [ -z "$URL_NODE" ] || [ -z "$URL_PM2" ] || [ -z "$URL_WATT" ]; then
   exit 1
 fi
 
+RUN_ORDER="${RUN_ORDER:-pm2,watt,node}"
+
+run_named() {
+  local phase=$1
+  local runner=$2
+  local url
+
+  case "$runner" in
+    node) url="$URL_NODE" ;;
+    pm2) url="$URL_PM2" ;;
+    watt) url="$URL_WATT" ;;
+    *) echo "Error: RUN_ORDER contains unknown runner: $runner" >&2; exit 1 ;;
+  esac
+
+  if [ "$phase" = "warmup" ]; then
+    run_warmup "${runner^^}" "$url"
+  else
+    run_ecommerce_test "${runner^^}" "$url"
+  fi
+}
+
 echo "========================================================================"
 echo "E-COMMERCE LOAD TEST CONFIGURATION"
 echo "========================================================================"
@@ -92,7 +113,7 @@ export const options = {
     },
   },
   thresholds: {
-    http_req_failed: ['rate<0.1'],
+    http_req_failed: ['rate==0'],
   },
 };
 
@@ -137,6 +158,10 @@ export const options = {
         { duration: '120s', target: 1000 }, // Constant at 1000 req/s for 120s
       ],
     },
+  },
+  thresholds: {
+    http_req_failed: ['rate==0'],
+    request_errors: ['count==0'],
   },
 };
 
@@ -281,9 +306,10 @@ echo ""
 echo "========================================================================"
 echo "PHASE 1: NLB WARM-UP (ALL ENDPOINTS)"
 echo "========================================================================"
-run_warmup "PM2" "$URL_PM2"
-run_warmup "Watt" "$URL_WATT"
-run_warmup "Node" "$URL_NODE"
+IFS=',' read -r -a runners <<< "$RUN_ORDER"
+for runner in "${runners[@]}"; do
+  run_named warmup "$runner"
+done
 
 echo ""
 echo "========================================================================"
@@ -297,37 +323,19 @@ echo "========================================================================"
 echo "PHASE 2: E-COMMERCE LOAD TESTS"
 echo "========================================================================"
 
-# Test PM2 first
-run_ecommerce_test "PM2" "$URL_PM2"
-
-# Upload results to S3 after PM2 test (if function is available)
-if type upload_to_s3 &>/dev/null; then
-  upload_to_s3 "pm2"
-fi
-
-echo ""
-echo "Cooldown: 480s before next test..."
-sleep 480
-
-# Test Watt
-run_ecommerce_test "Watt" "$URL_WATT"
-
-# Upload results to S3 after Watt test (if function is available)
-if type upload_to_s3 &>/dev/null; then
-  upload_to_s3 "watt"
-fi
-
-echo ""
-echo "Cooldown: 480s before next test..."
-sleep 480
-
-# Test Node
-run_ecommerce_test "Node" "$URL_NODE"
-
-# Upload results to S3 after Node test (if function is available)
-if type upload_to_s3 &>/dev/null; then
-  upload_to_s3 "node"
-fi
+last_runner_index=$((${#runners[@]} - 1))
+for runner_index in "${!runners[@]}"; do
+  runner="${runners[$runner_index]}"
+  run_named test "$runner"
+  if type upload_to_s3 &>/dev/null; then
+    upload_to_s3 "$runner"
+  fi
+  if [ "$runner_index" -ne "$last_runner_index" ]; then
+    echo ""
+    echo "Cooldown: 480s before next test..."
+    sleep 480
+  fi
+done
 
 echo ""
 echo "========================================================================"

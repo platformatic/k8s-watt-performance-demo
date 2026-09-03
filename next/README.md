@@ -11,6 +11,11 @@ to run your app using multiple workers with Watt.
 
 This demo compares running Next.js in `watt`, `pm2`, and `node`.
 
+The benchmark image uses the pinned `@platformatic/ssrt-next@16.3.0-canary.105-ssrt.4`
+release and the matching SSRT React packages. Set `SSRT_ENABLED=0` for the control
+build or `SSRT_ENABLED=1` for the SSRT build. Both builds use the same package and
+runtime; only the build-time `experimental.ssrTemplates` setting changes.
+
 ## Usage
 
 The _docker-compose.yml_ and _kube.yaml_ files are adjustable and passed into

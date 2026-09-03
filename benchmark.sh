@@ -21,7 +21,10 @@ KUBE_MANIFEST="${FRAMEWORK_SOURCE_DIR}/kube.yaml"
 AMI_ID="${AMI_ID:-ami-07b2b18045edffe90}" # Amazon Linux 2023 arm64
 LOADTESTING_INSTANCE_TYPE="${LOADTESTING_INSTANCE_TYPE:-c7gn.2xlarge}"
 ECR_REPO_NAME="${ECR_REPO_NAME:-watt-benchmark}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
+SSRT_ENABLED="${SSRT_ENABLED:-0}"
+IMAGE_TAG="${IMAGE_TAG:-next-ssrt-${SSRT_ENABLED}}"
+RUN_ORDER="${RUN_ORDER:-pm2,watt,node}"
+NPMRC_PATH="${NPMRC_PATH:-$HOME/.npmrc}"
 S3_BUCKET_NAME=""  # Will be set dynamically with cluster name
 
 # Infrastructure resource names (set by creation functions)
@@ -415,6 +418,13 @@ validate_docker() {
 	fi
 
 	success "Docker validated"
+
+	if [[ ! -f "$NPMRC_PATH" ]]; then
+		error "npm credentials file not found: $NPMRC_PATH"
+		error "Set NPMRC_PATH to an npmrc file containing registry credentials"
+		return 1
+	fi
+
 	return 0
 }
 
@@ -494,7 +504,9 @@ build_and_push_image() {
 	log "This may take a few minutes..."
 
 	if ! docker build \
+		--secret id=npmrc,src="$NPMRC_PATH" \
 		--platform linux/amd64 \
+		--build-arg SSRT_ENABLED="$SSRT_ENABLED" \
 		--build-arg COMMIT_HASH="$(git rev-parse HEAD 2>/dev/null || echo 'unknown')" \
 		--build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		-t "$ECR_IMAGE_URI" \
@@ -1106,6 +1118,7 @@ health_check_endpoints() {
 	local url_node=$1
 	local url_pm2=$2
 	local url_watt=$3
+	local failed=0
 
 	log "============================================================"
 	log "ENDPOINT HEALTH CHECKS"
@@ -1133,6 +1146,7 @@ health_check_endpoints() {
 				log "  Request $i: HTTP $http_code (${time_sec}s)"
 			else
 				log "  Request $i: HTTP $http_code (FAILED)"
+				failed=$((failed + 1))
 			fi
 			sleep 0.5
 		done
@@ -1146,6 +1160,7 @@ health_check_endpoints() {
 	done
 
 	log "============================================================"
+	return "$failed"
 }
 
 collect_pod_logs() {
@@ -1419,6 +1434,7 @@ echo 'Starting benchmark via LoadBalancers'
 export URL_NODE="$url_node"
 export URL_PM2="$url_pm2"
 export URL_WATT="$url_watt"
+export RUN_ORDER="$RUN_ORDER"
 export S3_BUCKET="$S3_BUCKET_NAME"
 export AWS_REGION="$AWS_REGION"
 
@@ -1654,13 +1670,18 @@ monitor_load_test() {
 
 main() {
 	log "########################################################################"
-	log "WATT BENCHMARK: Node vs PM2 vs Watt"
+	log "WATT BENCHMARK: Node vs PM2 vs Watt (SSRT_ENABLED=$SSRT_ENABLED)"
 	log "Framework: $FRAMEWORK"
 	log "Started at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	log "########################################################################"
 
 	if ! validate_aws_tools || ! validate_common_tools || ! validate_eks_tools || ! validate_docker; then
 		error "Tool validation failed"
+		exit 1
+	fi
+
+	if ! SSRT_ENABLED="$SSRT_ENABLED" "$PROJECT_ROOT/preflight.sh"; then
+		error "Read-only AWS preflight failed"
 		exit 1
 	fi
 

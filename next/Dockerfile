@@ -1,17 +1,24 @@
+# syntax=docker/dockerfile:1.7
+
 FROM node:24.11.0-alpine
 
 ARG COMMIT_HASH
 ARG BUILD_TIME
+ARG SSRT_ENABLED=0
 
 WORKDIR /app
 
 COPY . ./
 
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV TEMPLATES=$SSRT_ENABLED
 
 RUN npm install npm -g
 
-RUN npm install && npm cache clean --force
+RUN --mount=type=secret,id=npmrc,target=/run/secrets/npmrc,required=true \
+    NPM_CONFIG_USERCONFIG=/run/secrets/npmrc \
+    npm install --legacy-peer-deps --min-release-age=0 \
+    && npm cache clean --force
 RUN chmod +x entrypoint.sh
 
 EXPOSE 3000
