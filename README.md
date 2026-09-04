@@ -146,6 +146,24 @@ RUN_ORDER=pm2,watt,node \
 The control and SSRT images both use `@platformatic/ssrt-next`; the only build
 difference is `experimental.ssrTemplates`.
 
+### Detached runs
+
+Run the orchestrator detached from the terminal with `--detach`:
+
+```sh
+AWS_PROFILE=<your-profile-name> \
+CLUSTER_NAME=next-control-<run-id> \
+IMAGE_TAG=next-control-<run-id> \
+SSRT_ENABLED=0 \
+./benchmark.sh --detach
+```
+
+The command prints the background PID and writes output to
+`benchmark-detached-<timestamp>.log`. The load-test EC2 instance continues
+independently after the terminal is closed. If the laptop goes to sleep, the
+local orchestrator pauses and resumes when it wakes; AWS resources remain
+tracked in `.benchmark-state/`, and `cleanup.sh` can remove them if needed.
+
 ### Full Runner Matrix
 
 The two invocations above form the full six-result matrix: control and SSRT for

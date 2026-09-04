@@ -11,6 +11,15 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR" && pwd)"
 source "$PROJECT_ROOT/lib/common.sh"
 source "$PROJECT_ROOT/lib/state.sh"
 
+if [[ "${1:-}" == "--detach" ]]; then
+	log_file="${BENCHMARK_LOG_FILE:-${PROJECT_ROOT}/benchmark-detached-$(date +%Y%m%d-%H%M%S).log}"
+	nohup "$SCRIPT_DIR/benchmark.sh" "${@:2}" >"$log_file" 2>&1 < /dev/null &
+	detached_pid=$!
+	printf 'Detached benchmark started (PID %s).\n' "$detached_pid"
+	printf 'Log file: %s\n' "$log_file"
+	exit 0
+fi
+
 CLUSTER_NAME="${CLUSTER_NAME:-watt-benchmark-$(date +%s)}"
 AWS_PROFILE="${AWS_PROFILE}"
 NODE_TYPE="${NODE_TYPE:-m5.2xlarge}"
@@ -1114,55 +1123,6 @@ show_pod_events() {
 	log "============================================================"
 }
 
-health_check_endpoints() {
-	local url_node=$1
-	local url_pm2=$2
-	local url_watt=$3
-	local failed=0
-
-	log "============================================================"
-	log "ENDPOINT HEALTH CHECKS"
-	log "============================================================"
-
-	for endpoint in "Node:$url_node" "PM2:$url_pm2" "Watt:$url_watt"; do
-		local name="${endpoint%%:*}"
-		local url="${endpoint#*:}"
-
-		log ""
-		log "--- $name ($url) ---"
-
-		# Try multiple times with curl
-		local success_count=0
-		local total_time=0
-
-		for i in {1..5}; do
-			local result=$(curl -s -o /dev/null -w "%{http_code},%{time_total}" --connect-timeout 5 --max-time 10 "$url/" 2>/dev/null || echo "000,0")
-			local http_code="${result%%,*}"
-			local time_sec="${result##*,}"
-
-			if [[ "$http_code" == "200" ]]; then
-				success_count=$((success_count + 1))
-				total_time=$(echo "$total_time + $time_sec" | bc)
-				log "  Request $i: HTTP $http_code (${time_sec}s)"
-			else
-				log "  Request $i: HTTP $http_code (FAILED)"
-				failed=$((failed + 1))
-			fi
-			sleep 0.5
-		done
-
-		if [[ $success_count -gt 0 ]]; then
-			local avg_time=$(echo "scale=3; $total_time / $success_count" | bc)
-			success "$name: $success_count/5 successful, avg response time: ${avg_time}s"
-		else
-			error "$name: All health checks failed!"
-		fi
-	done
-
-	log "============================================================"
-	return "$failed"
-}
-
 collect_pod_logs() {
 	local deployment=$1
 	local lines=${2:-100}
@@ -1389,10 +1349,52 @@ launch_load_test_instance() {
 	# Create user data script for load_test instance
 	IFS='' read -r -d '' ac_user_script <<EOF || true
 #!/bin/bash
-set -x
+set -euxo pipefail
 
 yum update -y
 yum install -y httpd-tools
+
+export URL_NODE="$url_node"
+export URL_PM2="$url_pm2"
+export URL_WATT="$url_watt"
+
+# These checks run on the load-test host because the benchmark NLBs are internal.
+check_endpoint() {
+    local name="\$1"
+    local url="\$2"
+    local max_retries=30
+    local retry_delay=10
+
+    echo "Checking \$name at \$url..."
+    for ((i=1; i<=max_retries; i++)); do
+        local result
+        result=\$(curl -s -o /dev/null -w "%{http_code},%{time_total}" --connect-timeout 10 --max-time 30 "\$url/" || true)
+        local http_code="\${result%%,*}"
+        local time_sec="\${result##*,}"
+
+        if [[ "\$http_code" == "200" ]]; then
+            echo "  \$name: HTTP 200 on attempt \$i (\${time_sec}s)"
+            return 0
+        fi
+
+        echo "  \$name: HTTP \$http_code on attempt \$i/\$max_retries"
+        if [[ \$i -lt \$max_retries ]]; then
+            sleep "\$retry_delay"
+        fi
+    done
+
+    echo "  \$name: FAILED after \$max_retries attempts"
+    return 1
+}
+
+echo "REMOTE HEALTH CHECKS"
+if ! check_endpoint "Node" "\$URL_NODE" || \
+   ! check_endpoint "PM2" "\$URL_PM2" || \
+   ! check_endpoint "Watt" "\$URL_WATT"; then
+    echo "REMOTE_HEALTH_CHECKS_FAILED"
+    exit 1
+fi
+echo "REMOTE_HEALTH_CHECKS_PASSED"
 
 # Install k6 from static binary for ARM64 support
 K6_VERSION=\$(curl -s https://api.github.com/repos/grafana/k6/releases/latest | grep -oP '"tag_name": "v\K[^"]+')
@@ -1431,9 +1433,6 @@ sysctl fs.file-max=2097152  # System-wide
 sysctl fs.nr_open=2097152
 
 echo 'Starting benchmark via LoadBalancers'
-export URL_NODE="$url_node"
-export URL_PM2="$url_pm2"
-export URL_WATT="$url_watt"
 export RUN_ORDER="$RUN_ORDER"
 export S3_BUCKET="$S3_BUCKET_NAME"
 export AWS_REGION="$AWS_REGION"
@@ -1632,6 +1631,12 @@ monitor_load_test() {
 			return 0
 		fi
 
+		if echo "$current_output" | grep -q "REMOTE_HEALTH_CHECKS_FAILED"; then
+			error "Remote endpoint health checks failed!"
+			log "Full log saved to: $log_file"
+			return 1
+		fi
+
 		# Check for common failure patterns
 		if echo "$current_output" | grep -qiE "fatal error|panic|segmentation fault|out of memory|killed|failed to start"; then
 			error "Load test script failed!"
@@ -1768,9 +1773,6 @@ main() {
 
 	# Run pre-benchmark diagnostics
 	pre_benchmark_diagnostics
-
-	# Health check all endpoints before load testing
-	health_check_endpoints "$url_node" "$url_pm2" "$url_watt"
 
 	create_security_group_for_load_test
 	save_resource "ec2" "security_group_id" "$SECURITY_GROUP_ID"
