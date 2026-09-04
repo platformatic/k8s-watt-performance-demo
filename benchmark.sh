@@ -27,7 +27,7 @@ NODE_COUNT="${NODE_COUNT:-4}"
 FRAMEWORK="${FRAMEWORK:-next}"
 FRAMEWORK_SOURCE_DIR="$PROJECT_ROOT/$FRAMEWORK"
 KUBE_MANIFEST="${FRAMEWORK_SOURCE_DIR}/kube.yaml"
-AMI_ID="${AMI_ID:-ami-07b2b18045edffe90}" # Amazon Linux 2023 arm64
+AMI_ID="${AMI_ID:-}" # Resolved from the regional Amazon Linux 2023 ARM64 public parameter
 LOADTESTING_INSTANCE_TYPE="${LOADTESTING_INSTANCE_TYPE:-c7gn.2xlarge}"
 ECR_REPO_NAME="${ECR_REPO_NAME:-watt-benchmark}"
 SSRT_ENABLED="${SSRT_ENABLED:-0}"
@@ -455,6 +455,23 @@ setup_aws_info() {
 	if [[ -z "$AWS_REGION" ]]; then
 		error "Could not get AWS region. Please set a default region with: aws configure"
 		return 1
+	fi
+
+	if [[ -z "$AMI_ID" ]]; then
+		log "Resolving the latest Amazon Linux 2023 ARM64 AMI for $AWS_REGION..."
+		AMI_ID=$(aws ssm get-parameter \
+			--name "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64" \
+			--profile "$AWS_PROFILE" \
+			--region "$AWS_REGION" \
+			--query 'Parameter.Value' \
+			--output text)
+
+		if [[ -z "$AMI_ID" || "$AMI_ID" == "None" ]]; then
+			error "Could not resolve an Amazon Linux 2023 ARM64 AMI for $AWS_REGION"
+			return 1
+		fi
+
+		log "Using resolved load-test AMI: $AMI_ID"
 	fi
 
 	ECR_IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:${IMAGE_TAG}"

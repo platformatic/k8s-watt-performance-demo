@@ -199,7 +199,7 @@ Optional environment variables:
 | `CLUSTER_NAME` | `watt-benchmark-<timestamp>` | EKS cluster name |
 | `NODE_TYPE` | `m5.2xlarge` | Instance type for EKS worker nodes |
 | `NODE_COUNT` | `4` | Number of worker nodes |
-| `AMI_ID` | `ami-07b2b18045edffe90` | Amazon Linux 2023 AMI for k6 instance |
+| `AMI_ID` | latest regional AMI | Amazon Linux 2023 ARM64 AMI for the k6 instance; resolved through AWS Systems Manager unless explicitly set |
 | `LOADTESTING_INSTANCE_TYPE` | `c7gn.2xlarge` | EC2 instance type for k6 (16GB RAM for 10k VUs) |
 | `ECR_REPO_NAME` | `watt-benchmark` | ECR repository name |
 | `IMAGE_TAG` | `next-ssrt-<SSRT_ENABLED>` | Docker image tag |

@@ -95,7 +95,7 @@ Optional (with defaults):
 - `CLUSTER_NAME` - EKS cluster name (default: `watt-benchmark-<timestamp>`)
 - `NODE_TYPE` - EC2 instance type for EKS nodes (default: `m5.2xlarge`)
 - `NODE_COUNT` - Number of worker nodes (default: `4`)
-- `AMI_ID` - Amazon Linux 2023 AMI for load testing EC2 (default: `ami-07b2b18045edffe90`)
+- `AMI_ID` - Amazon Linux 2023 ARM64 AMI for load testing EC2 (resolved from the regional AWS public parameter unless explicitly set)
 - `LOADTESTING_INSTANCE_TYPE` - EC2 instance type for k6 (default: `c7gn.2xlarge`, 16GB RAM for 10k VUs)
 - `ECR_REPO_NAME` - ECR repository name (default: `watt-benchmark`)
 - `IMAGE_TAG` - Docker image tag (default: `latest`)
