@@ -148,21 +148,31 @@ difference is `experimental.ssrTemplates`.
 
 ### Detached runs
 
-Run the orchestrator detached from the terminal with `--detach`:
+Set the AWS profile in a local `.env` file:
 
 ```sh
-AWS_PROFILE=<your-profile-name> \
-CLUSTER_NAME=next-control-<run-id> \
-IMAGE_TAG=next-control-<run-id> \
-SSRT_ENABLED=0 \
-./benchmark.sh --detach
+AWS_PROFILE=prd-2078
 ```
 
-The command prints the background PID and writes output to
-`benchmark-detached-<timestamp>.log`. The load-test EC2 instance continues
-independently after the terminal is closed. If the laptop goes to sleep, the
-local orchestrator pauses and resumes when it wakes; AWS resources remain
-tracked in `.benchmark-state/`, and `cleanup.sh` can remove them if needed.
+Then use the single launcher with a run ID. SSRT defaults to disabled:
+
+```sh
+./run-benchmark.sh 2026-09-04-002
+```
+
+This derives `CLUSTER_NAME=next-control-2026-09-04-002` and the matching image
+tag. To run the SSRT arm with the same run ID:
+
+```sh
+./run-benchmark.sh 2026-09-04-002 1
+```
+
+The launcher starts `benchmark.sh --detach`, which prints the background PID
+and writes output to `benchmark-detached-<timestamp>.log`. The load-test EC2
+instance continues independently after the terminal is closed. If the laptop
+goes to sleep, the local orchestrator pauses and resumes when it wakes; AWS
+resources remain tracked in `.benchmark-state/`, and `cleanup.sh` can remove
+them if needed.
 
 ### Full Runner Matrix
 

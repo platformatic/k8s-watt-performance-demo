@@ -1368,8 +1368,16 @@ launch_load_test_instance() {
 #!/bin/bash
 set -euxo pipefail
 
+on_exit() {
+    local status=\$?
+    if [[ \$status -ne 0 ]]; then
+        echo "REMOTE_BENCHMARK_FAILED exit=\$status"
+    fi
+}
+trap on_exit EXIT
+
 yum update -y
-yum install -y httpd-tools
+yum install -y httpd-tools jq
 
 export URL_NODE="$url_node"
 export URL_PM2="$url_pm2"
@@ -1413,11 +1421,34 @@ if ! check_endpoint "Node" "\$URL_NODE" || \
 fi
 echo "REMOTE_HEALTH_CHECKS_PASSED"
 
-# Install k6 from static binary for ARM64 support
-K6_VERSION=\$(curl -s https://api.github.com/repos/grafana/k6/releases/latest | grep -oP '"tag_name": "v\K[^"]+')
-curl -L "https://github.com/grafana/k6/releases/download/v\${K6_VERSION}/k6-v\${K6_VERSION}-linux-arm64.tar.gz" -o /tmp/k6.tar.gz
+# Install k6 from the latest static binary for ARM64 support.
+K6_VERSION=""
+for attempt in {1..5}; do
+    if K6_VERSION=\$(curl --fail --silent --show-error --location \
+        --connect-timeout 10 --max-time 30 \
+        https://api.github.com/repos/grafana/k6/releases/latest | jq -r '.tag_name // empty') && [[ -n "\$K6_VERSION" ]]; then
+        break
+    fi
+
+    echo "Unable to resolve the latest k6 version (attempt \$attempt/5)"
+    K6_VERSION=""
+    sleep 5
+done
+
+if [[ -z "\$K6_VERSION" ]]; then
+    echo "K6_INSTALL_FAILED: unable to resolve the latest k6 release"
+    exit 1
+fi
+
+if ! curl --fail --silent --show-error --location \
+    "https://github.com/grafana/k6/releases/download/\${K6_VERSION}/k6-\${K6_VERSION}-linux-arm64.tar.gz" \
+    -o /tmp/k6.tar.gz; then
+    echo "K6_INSTALL_FAILED: unable to download k6 \$K6_VERSION"
+    exit 1
+fi
+
 tar -xzf /tmp/k6.tar.gz -C /tmp
-mv "/tmp/k6-v\${K6_VERSION}-linux-arm64/k6" /usr/local/bin/k6
+mv "/tmp/k6-\${K6_VERSION}-linux-arm64/k6" /usr/local/bin/k6
 chmod +x /usr/local/bin/k6
 rm -rf /tmp/k6*
 
@@ -1648,8 +1679,8 @@ monitor_load_test() {
 			return 0
 		fi
 
-		if echo "$current_output" | grep -q "REMOTE_HEALTH_CHECKS_FAILED"; then
-			error "Remote endpoint health checks failed!"
+		if echo "$current_output" | grep -qE "REMOTE_HEALTH_CHECKS_FAILED|REMOTE_BENCHMARK_FAILED|K6_INSTALL_FAILED"; then
+			error "Remote benchmark startup failed!"
 			log "Full log saved to: $log_file"
 			return 1
 		fi
