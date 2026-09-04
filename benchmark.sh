@@ -1473,8 +1473,12 @@ sysctl net.ipv4.ip_local_port_range="1024 65535"  # Current default is probably 
 # TIME_WAIT socket reuse (essential for load testing)
 sysctl net.ipv4.tcp_tw_reuse=1
 
-# Reduce TIME_WAIT duration from 60s to 30s
-sysctl net.netfilter.nf_conntrack_tcp_timeout_time_wait=30  # If using conntrack
+# Reduce conntrack TIME_WAIT duration when this optional kernel setting exists.
+if [[ -e /proc/sys/net/netfilter/nf_conntrack_tcp_timeout_time_wait ]]; then
+    sysctl net.netfilter.nf_conntrack_tcp_timeout_time_wait=30
+else
+    echo "Skipping unavailable conntrack TIME_WAIT timeout setting"
+fi
 
 ulimit -n 1000000
 sysctl fs.file-max=2097152  # System-wide

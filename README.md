@@ -174,6 +174,15 @@ goes to sleep, the local orchestrator pauses and resumes when it wakes; AWS
 resources remain tracked in `.benchmark-state/`, and `cleanup.sh` can remove
 them if needed.
 
+Verify that a run has no remaining AWS resources:
+
+```sh
+./check-resources.sh 2026-09-04-002
+```
+
+Pass `1` as the second argument for the SSRT arm. The checker is read-only and
+returns a nonzero status if resources or the run state file remain.
+
 ### Full Runner Matrix
 
 The two invocations above form the full six-result matrix: control and SSRT for
