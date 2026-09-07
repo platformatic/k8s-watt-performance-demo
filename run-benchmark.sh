@@ -41,4 +41,11 @@ export CLUSTER_NAME="next-${arm}-${RUN_ID}"
 export IMAGE_TAG="$CLUSTER_NAME"
 export SSRT_ENABLED
 
-exec "$SCRIPT_DIR/benchmark.sh" --detach
+LOG_DIR="$SCRIPT_DIR/logs"
+mkdir -p "$LOG_DIR"
+LOG="$LOG_DIR/benchmark-detached-$(date +%Y%m%d-%H%M%S).log"
+export BENCHMARK_LOG_FILE="$LOG"
+touch "$LOG"
+
+"$SCRIPT_DIR/benchmark.sh" --detach
+tail -n 1000 -f "$LOG"
