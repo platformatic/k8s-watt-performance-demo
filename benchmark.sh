@@ -1508,10 +1508,15 @@ export BENCHMARK_LOG
 export S3_BUCKET
 export AWS_REGION
 
-# Run load test and capture output to both console and log file
+# Run load test and capture output to both console and log file.
+# Do not abort here when k6 returns a nonzero (threshold) status: the final
+# results must still be uploaded and completion reported.
+set +e
 {
 $load_test_script
 } 2>&1 | tee -a "\$BENCHMARK_LOG"
+loadtest_status=\${PIPESTATUS[0]}
+set -e
 
 # Final upload after all tests complete
 upload_to_s3 "final"
@@ -1519,6 +1524,8 @@ upload_to_s3 "final"
 echo 'Benchmark completed - instance will terminate'
 echo "Results saved to: \$BENCHMARK_LOG"
 echo "Results uploaded to: s3://\$S3_BUCKET/"
+
+exit "\$loadtest_status"
 EOF
 
 	local ac_user_data=$(gzip_base64_encode "$ac_user_script")
