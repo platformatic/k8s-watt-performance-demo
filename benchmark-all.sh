@@ -7,6 +7,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+LOG_DIR="$SCRIPT_DIR/logs"
+mkdir -p "$LOG_DIR"
 
 # Colors for output
 RED='\033[0;31m'
@@ -117,7 +119,7 @@ log "Checking for result files..."
 echo ""
 
 for framework in "${FRAMEWORKS[@]}"; do
-  latest_result=$(ls -t results/${framework}-*.log 2>/dev/null | head -1)
+	latest_result=$(ls -t "$LOG_DIR"/${framework}-*.log 2>/dev/null | head -1)
   if [ -n "$latest_result" ]; then
     success "$framework: $latest_result"
   else

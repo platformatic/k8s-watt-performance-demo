@@ -168,7 +168,7 @@ tag. To run the SSRT arm with the same run ID:
 ```
 
 The launcher starts `benchmark.sh --detach`, which prints the background PID
-and writes output to `benchmark-detached-<timestamp>.log`. The load-test EC2
+and writes output to `logs/benchmark-detached-<timestamp>.log`. The load-test EC2
 instance continues independently after the terminal is closed. If the laptop
 goes to sleep, the local orchestrator pauses and resumes when it wakes; AWS
 resources remain tracked in `.benchmark-state/`, and `cleanup.sh` can remove

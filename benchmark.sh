@@ -8,11 +8,14 @@ export AWS_PAGER=""
 # Load common functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR" && pwd)"
+LOG_DIR="$PROJECT_ROOT/logs"
+mkdir -p "$LOG_DIR"
 source "$PROJECT_ROOT/lib/common.sh"
 source "$PROJECT_ROOT/lib/state.sh"
 
 if [[ "${1:-}" == "--detach" ]]; then
-	log_file="${BENCHMARK_LOG_FILE:-${PROJECT_ROOT}/benchmark-detached-$(date +%Y%m%d-%H%M%S).log}"
+	configured_log_file="${BENCHMARK_LOG_FILE:-benchmark-detached-$(date +%Y%m%d-%H%M%S).log}"
+	log_file="$LOG_DIR/${configured_log_file##*/}"
 	nohup "$SCRIPT_DIR/benchmark.sh" "${@:2}" >"$log_file" 2>&1 < /dev/null &
 	detached_pid=$!
 	printf 'Detached benchmark started (PID %s).\n' "$detached_pid"
@@ -1601,7 +1604,7 @@ monitor_load_test() {
 
 	# Create log file with timestamp
 	local log_timestamp=$(date +%Y%m%d_%H%M%S)
-	local log_file="${PROJECT_ROOT}/benchmark_${log_timestamp}.log"
+	local log_file="${LOG_DIR}/benchmark_${log_timestamp}.log"
 
 	log "Monitoring load_test instance console output..."
 	log "Waiting for benchmark to complete (timeout: ${max_wait_seconds}s)..."
@@ -1667,8 +1670,7 @@ monitor_load_test() {
 		# Check for successful completion
 		if echo "$current_output" | grep -q "Benchmark completed"; then
 			# Download complete results from S3 (has full history, not truncated)
-			local results_dir="$PROJECT_ROOT/results"
-			mkdir -p "$results_dir"
+			local results_dir="$LOG_DIR"
 			local timestamp=$(date +%Y%m%d-%H%M%S)
 			local results_file="$results_dir/${FRAMEWORK}-${timestamp}.log"
 

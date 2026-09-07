@@ -3,6 +3,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+LOG_DIR="$ROOT_DIR/logs"
+mkdir -p "$LOG_DIR"
 
 # Colors for output
 RED='\033[0;31m'
@@ -70,7 +72,7 @@ echo ""
 # Test Next.js
 log "Starting Next.js app on port 3000..."
 cd "$ROOT_DIR/next"
-PORT=3000 npm run start:node > /tmp/next-server.log 2>&1 &
+PORT=3000 npm run start:node > "$LOG_DIR/next-server.log" 2>&1 &
 NEXT_PID=$!
 
 if wait_for_server "http://localhost:3000"; then
@@ -78,7 +80,7 @@ if wait_for_server "http://localhost:3000"; then
 
     log "Running tests against Next.js..."
     cd "$SCRIPT_DIR"
-    if BASE_URL=http://localhost:3000 npx playwright test --reporter=line 2>&1 | tee /tmp/next-test.log; then
+    if BASE_URL=http://localhost:3000 npx playwright test --reporter=line 2>&1 | tee "$LOG_DIR/next-test.log"; then
         success "Next.js tests passed!"
         NEXT_RESULT="PASSED"
     else
@@ -96,7 +98,7 @@ sleep 2
 # Test React Router
 log "Starting React Router app on port 3001..."
 cd "$ROOT_DIR/react-router"
-PORT=3001 npm run start:node > /tmp/react-router-server.log 2>&1 &
+PORT=3001 npm run start:node > "$LOG_DIR/react-router-server.log" 2>&1 &
 RR_PID=$!
 
 if wait_for_server "http://localhost:3001"; then
@@ -104,7 +106,7 @@ if wait_for_server "http://localhost:3001"; then
 
     log "Running tests against React Router..."
     cd "$SCRIPT_DIR"
-    if BASE_URL=http://localhost:3001 npx playwright test --reporter=line 2>&1 | tee /tmp/react-router-test.log; then
+    if BASE_URL=http://localhost:3001 npx playwright test --reporter=line 2>&1 | tee "$LOG_DIR/react-router-test.log"; then
         success "React Router tests passed!"
         REACT_ROUTER_RESULT="PASSED"
     else
@@ -125,7 +127,7 @@ log "Starting TanStack app on port 3002..."
 fuser -k 3002/tcp 2>/dev/null || true
 sleep 1
 cd "$ROOT_DIR/tanstack"
-PORT=3002 npm run start:node > /tmp/tanstack-server.log 2>&1 &
+PORT=3002 npm run start:node > "$LOG_DIR/tanstack-server.log" 2>&1 &
 TS_PID=$!
 
 if wait_for_server "http://localhost:3002"; then
@@ -133,7 +135,7 @@ if wait_for_server "http://localhost:3002"; then
 
     log "Running tests against TanStack..."
     cd "$SCRIPT_DIR"
-    if BASE_URL=http://localhost:3002 npx playwright test --reporter=line 2>&1 | tee /tmp/tanstack-test.log; then
+    if BASE_URL=http://localhost:3002 npx playwright test --reporter=line 2>&1 | tee "$LOG_DIR/tanstack-test.log"; then
         success "TanStack tests passed!"
         TANSTACK_RESULT="PASSED"
     else
