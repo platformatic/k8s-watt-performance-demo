@@ -39,6 +39,11 @@ spec:
             - name: 'app'
               containerPort: 3000
               protocol: 'TCP'
+          # Probes hit the real homepage, so under load their latency tracks the
+          # request latency. The previous liveness settings (1s timeout, 5 failures
+          # every 2s) killed every pod twice per load test once latency crossed 1s,
+          # and a single slow readiness check pulled pods out of the NLB target
+          # group. Both are now tolerant enough to survive a saturated 3-minute run.
           readinessProbe:
             httpGet:
               path: '/'
@@ -46,16 +51,17 @@ spec:
               scheme: 'HTTP'
             initialDelaySeconds: 30
             periodSeconds: 30
-            failureThreshold: 1
+            timeoutSeconds: 5
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: '/'
               port: 'app'
               scheme: 'HTTP'
-            periodSeconds: 2
+            periodSeconds: 10
             successThreshold: 1
-            timeoutSeconds: 1
-            failureThreshold: 5
+            timeoutSeconds: 5
+            failureThreshold: 10
           startupProbe:
             httpGet:
               path: '/'
@@ -114,6 +120,11 @@ spec:
             - name: 'app'
               containerPort: 3000
               protocol: 'TCP'
+          # Probes hit the real homepage, so under load their latency tracks the
+          # request latency. The previous liveness settings (1s timeout, 5 failures
+          # every 2s) killed every pod twice per load test once latency crossed 1s,
+          # and a single slow readiness check pulled pods out of the NLB target
+          # group. Both are now tolerant enough to survive a saturated 3-minute run.
           readinessProbe:
             httpGet:
               path: '/'
@@ -121,16 +132,17 @@ spec:
               scheme: 'HTTP'
             initialDelaySeconds: 30
             periodSeconds: 30
-            failureThreshold: 1
+            timeoutSeconds: 5
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: '/'
               port: 'app'
               scheme: 'HTTP'
-            periodSeconds: 2
+            periodSeconds: 10
             successThreshold: 1
-            timeoutSeconds: 1
-            failureThreshold: 5
+            timeoutSeconds: 5
+            failureThreshold: 10
           startupProbe:
             httpGet:
               path: '/'
@@ -192,6 +204,11 @@ spec:
             - name: 'metrics'
               containerPort: 9090
               protocol: 'TCP'
+          # Probes hit the real homepage, so under load their latency tracks the
+          # request latency. The previous liveness settings (1s timeout, 5 failures
+          # every 2s) killed every pod twice per load test once latency crossed 1s,
+          # and a single slow readiness check pulled pods out of the NLB target
+          # group. Both are now tolerant enough to survive a saturated 3-minute run.
           readinessProbe:
             httpGet:
               path: '/'
@@ -199,16 +216,17 @@ spec:
               scheme: 'HTTP'
             initialDelaySeconds: 30
             periodSeconds: 30
-            failureThreshold: 1
+            timeoutSeconds: 5
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: '/'
               port: 'app'
               scheme: 'HTTP'
-            periodSeconds: 2
+            periodSeconds: 10
             successThreshold: 1
-            timeoutSeconds: 1
-            failureThreshold: 5
+            timeoutSeconds: 5
+            failureThreshold: 10
           startupProbe:
             httpGet:
               path: '/'

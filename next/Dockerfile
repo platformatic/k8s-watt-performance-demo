@@ -34,6 +34,16 @@ ENV NODE_ENV=production
 
 RUN npm run build
 
+# When the SSRT arm is requested, fail the build if no component was actually
+# compiled into templates. Turbopack silently skips the template loader when its
+# rules do not match the app directory, which would ship a control image
+# labelled as SSRT. Busybox grep has no --include, hence the find pipeline.
+RUN if [ "$SSRT_ENABLED" = "1" ]; then \
+      count=$(find .next/server -name "*.js" -exec grep -ohE "flightTemplate|jsxTemplate|renderTemplate" {} + | wc -l); \
+      echo "SSRT template call sites: $count"; \
+      if [ "$count" -eq 0 ]; then echo "SSRT_ENABLED=1 but no SSR templates were compiled" >&2; exit 1; fi; \
+    fi
+
 ENTRYPOINT ["./entrypoint.sh"]
 
 LABEL org.opencontainers.image.authors="Platformatic"

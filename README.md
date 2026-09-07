@@ -144,7 +144,9 @@ RUN_ORDER=pm2,watt,node \
 ```
 
 The control and SSRT images both use `@platformatic/ssrt-next`; the only build
-difference is `experimental.ssrTemplates`.
+difference is `experimental.ssrTemplates`. The SSRT Docker build fails if the
+compiled bundle contains no template call sites, so a mislabelled control image
+cannot be pushed.
 
 ### Detached runs
 
@@ -168,7 +170,9 @@ tag. To run the SSRT arm with the same run ID:
 ```
 
 The launcher starts `benchmark.sh --detach`, which prints the background PID
-and writes output to `logs/benchmark-detached-<timestamp>.log`. The load-test EC2
+and writes output to `logs/benchmark-detached-<timestamp>.log`. During the load
+test the orchestrator installs metrics-server and appends `kubectl top pods`
+samples every 30s to `logs/pod-usage_<timestamp>.log`. The load-test EC2
 instance continues independently after the terminal is closed. If the laptop
 goes to sleep, the local orchestrator pauses and resumes when it wakes; AWS
 resources remain tracked in `.benchmark-state/`, and `cleanup.sh` can remove
@@ -224,4 +228,5 @@ Optional environment variables:
 | `IMAGE_TAG` | `next-ssrt-<SSRT_ENABLED>` | Docker image tag |
 | `SSRT_ENABLED` | `0` | Set to `1` to build the SSRT templates arm; `0` builds the control arm |
 | `RUN_ORDER` | `pm2,watt,node` | Comma-separated runner order for the load test |
+| `TARGET_RATE` | `600` | Peak k6 arrival rate (req/s) of the main test; the 6 vCPU per runner saturate around 750-800 req/s, so keep it below the knee |
 | `NPMRC_PATH` | `$HOME/.npmrc` | npm credentials file mounted during the Docker build |

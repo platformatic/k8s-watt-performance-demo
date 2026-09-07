@@ -11,10 +11,13 @@ to run your app using multiple workers with Watt.
 
 This demo compares running Next.js in `watt`, `pm2`, and `node`.
 
-The benchmark image uses the pinned `@platformatic/ssrt-next@16.3.0-canary.105-ssrt.4`
+The benchmark image uses the pinned `@platformatic/ssrt-next@16.3.0-canary.105-ssrt.5`
 release and the matching SSRT React packages. Set `SSRT_ENABLED=0` for the control
 build or `SSRT_ENABLED=1` for the SSRT build. Both builds use the same package and
 runtime; only the build-time `experimental.ssrTemplates` setting changes.
+Releases before `ssrt.5` only templated `./app/**` under Turbopack and could not
+parse TypeScript sources, so this `src/app` project shipped no templates; the
+Dockerfile fails the SSRT build if no template call sites end up in `.next/server`.
 
 ## Usage
 

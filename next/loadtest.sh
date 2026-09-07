@@ -13,6 +13,10 @@ if [ -z "$URL_NODE" ] || [ -z "$URL_PM2" ] || [ -z "$URL_WATT" ]; then
 fi
 
 RUN_ORDER="${RUN_ORDER:-pm2,watt,node}"
+# Peak arrival rate of the main test. The cluster (6 vCPU per runner) saturates
+# around 750-800 req/s for the mixed workload; 1000 req/s produced a crash loop
+# in every arm, so the default sits below the knee.
+TARGET_RATE="${TARGET_RATE:-600}"
 
 run_named() {
   local phase=$1
@@ -44,7 +48,7 @@ echo "Test Parameters:"
 echo "  - Initial NLB warm-up: 60s per endpoint (10->500 req/s ramp)"
 echo "  - Pre-test warm-up: 20s per endpoint (50->400 req/s ramp)"
 echo "  - Post-warmup wait: 60s before main test"
-echo "  - Test duration: 60s ramp-up (0->1000 req/s) + 120s @ 1000 req/s"
+echo "  - Test duration: 60s ramp-up (0->${TARGET_RATE} req/s) + 120s @ ${TARGET_RATE} req/s"
 echo "  - Cooldown: 480s between tests"
 echo "  - Scenarios: Homepage, Search, Card Detail, Game Browse, Sellers"
 echo "========================================================================"
@@ -144,6 +148,8 @@ const SEARCH_QUERIES = ['pikachu', 'charizard', 'dragon', 'rare', 'ex', 'magic',
 const GAME_SLUGS = ['pokemon', 'magic', 'yugioh', 'digimon', 'onepiece'];
 const SET_SLUGS = ['scarlet-violet', 'paldea-evolved', 'murders-at-karlov-manor', 'phantom-nightmare'];
 
+const TARGET_RATE = parseInt(__ENV.TARGET_RATE || '600', 10);
+
 export const options = {
   summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
   scenarios: {
@@ -154,8 +160,8 @@ export const options = {
       preAllocatedVUs: 2000,
       maxVUs: 20000,
       stages: [
-        { duration: '60s', target: 1000 },  // Ramp up over 60s
-        { duration: '120s', target: 1000 }, // Constant at 1000 req/s for 120s
+        { duration: '60s', target: TARGET_RATE },  // Ramp up over 60s
+        { duration: '120s', target: TARGET_RATE }, // Constant at TARGET_RATE req/s for 120s
       ],
     },
   },
@@ -282,7 +288,7 @@ run_ecommerce_test() {
   echo "========================================================================"
   echo "E-COMMERCE LOAD TEST: $name"
   echo "Target: $url"
-  echo "Duration: 60s ramp-up + 120s @ 1000 req/s (mixed scenarios)"
+  echo "Duration: 60s ramp-up + 120s @ ${TARGET_RATE} req/s (mixed scenarios)"
   echo "========================================================================"
 
   # Pre-test warm-up
@@ -294,7 +300,7 @@ run_ecommerce_test() {
 
   echo ""
   echo "Starting main load test..."
-  echo "$K6_ECOMMERCE_SCRIPT" | k6 run -e TARGET="$url" - || echo "WARN: main load test for $name exited nonzero"
+  echo "$K6_ECOMMERCE_SCRIPT" | k6 run -e TARGET="$url" -e TARGET_RATE="$TARGET_RATE" - || echo "WARN: main load test for $name exited nonzero"
 
   echo ""
   echo "Test complete for $name"

@@ -14,7 +14,7 @@
     "@platformatic/next": "^3.39.0",
     "@platformatic/runtime": "^3.39.0",
     "@platformatic/watt-extra": "^1.10.0",
-    "next": "npm:@platformatic/ssrt-next@16.3.0-canary.105-ssrt.4",
+    "next": "npm:@platformatic/ssrt-next@16.3.0-canary.105-ssrt.5",
     "platformatic": "^3.39.0",
     "pm2": "^6.0.0",
     "@platformatic/ssrt-react": "19.3.0-ssrt.2",

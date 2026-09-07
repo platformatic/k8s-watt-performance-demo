@@ -36,6 +36,10 @@ ECR_REPO_NAME="${ECR_REPO_NAME:-watt-benchmark}"
 SSRT_ENABLED="${SSRT_ENABLED:-0}"
 IMAGE_TAG="${IMAGE_TAG:-next-ssrt-${SSRT_ENABLED}}"
 RUN_ORDER="${RUN_ORDER:-pm2,watt,node}"
+# Peak arrival rate of the main k6 test. The cluster (6 vCPU per runner)
+# saturates around 750-800 req/s for the mixed workload and 1000 req/s produced
+# a liveness-probe crash loop in every arm, so the default sits below the knee.
+TARGET_RATE="${TARGET_RATE:-600}"
 NPMRC_PATH="${NPMRC_PATH:-$HOME/.npmrc}"
 S3_BUCKET_NAME=""  # Will be set dynamically with cluster name
 
@@ -1018,6 +1022,22 @@ wait_for_nodes() {
 	return 1
 }
 
+install_metrics_server() {
+	log "Installing metrics-server so kubectl top can sample CPU during the benchmark..."
+
+	# Best effort: the benchmark still runs without it, only the CPU samples are lost.
+	if ! kubectl --context "$KUBE_CONTEXT" apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml >/dev/null 2>&1; then
+		warning "metrics-server install failed; kubectl top will be unavailable"
+		return 0
+	fi
+
+	if kubectl --context "$KUBE_CONTEXT" -n kube-system rollout status deployment/metrics-server --timeout=180s >/dev/null 2>&1; then
+		success "metrics-server is ready"
+	else
+		warning "metrics-server did not become ready; kubectl top may be unavailable"
+	fi
+}
+
 apply_framework_manifests() {
 	log "Applying $FRAMEWORK manifests from $KUBE_MANIFEST..."
 
@@ -1489,6 +1509,7 @@ sysctl fs.nr_open=2097152
 
 echo 'Starting benchmark via LoadBalancers'
 export RUN_ORDER="$RUN_ORDER"
+export TARGET_RATE="$TARGET_RATE"
 export S3_BUCKET="$S3_BUCKET_NAME"
 export AWS_REGION="$AWS_REGION"
 
@@ -1605,10 +1626,12 @@ monitor_load_test() {
 	# Create log file with timestamp
 	local log_timestamp=$(date +%Y%m%d_%H%M%S)
 	local log_file="${LOG_DIR}/benchmark_${log_timestamp}.log"
+	local usage_file="${LOG_DIR}/pod-usage_${log_timestamp}.log"
 
 	log "Monitoring load_test instance console output..."
 	log "Waiting for benchmark to complete (timeout: ${max_wait_seconds}s)..."
 	log "Saving logs to: $log_file"
+	log "Saving pod CPU/memory samples to: $usage_file"
 
 	# Initialize log file with header
 	{
@@ -1720,6 +1743,15 @@ monitor_load_test() {
 			return 1
 		fi
 
+		# Sample pod CPU/memory every 30s so the k6 phases (UTC timestamps in the
+		# console log) can be correlated with cluster utilization.
+		if ((elapsed % 30 == 0)); then
+			{
+				echo "--- $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+				kubectl --context "$KUBE_CONTEXT" top pods --no-headers 2>/dev/null || echo "(metrics-server not available)"
+			} >> "$usage_file"
+		fi
+
 		elapsed=$((elapsed + check_interval))
 		sleep $check_interval
 	done
@@ -1809,6 +1841,7 @@ main() {
 	create_nodegroup
 	save_resource "eks" "nodegroup_name" "${CLUSTER_NAME}-nodegroup"
 	wait_for_nodes
+	install_metrics_server
 
 	apply_framework_manifests
 	wait_for_pods
