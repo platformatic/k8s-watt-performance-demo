@@ -16,8 +16,10 @@ release and the matching SSRT React packages. Set `SSRT_ENABLED=0` for the contr
 build or `SSRT_ENABLED=1` for the SSRT build. Both builds use the same package and
 runtime; only the build-time `experimental.ssrTemplates` setting changes.
 Releases before `ssrt.5` only templated `./app/**` under Turbopack and could not
-parse TypeScript sources, so this `src/app` project shipped no templates; the
-Dockerfile fails the SSRT build if no template call sites end up in `.next/server`.
+parse TypeScript sources, so this `src/app` project shipped no templates. The
+Dockerfile runs `scripts/check-ssrt-templates.cjs` on the `/sellers` render path
+and fails the SSRT build on any template bailout or if the sellers chunk has no
+template call sites; `/api/ssrt` reports the build-time flag at runtime.
 
 ## Usage
 

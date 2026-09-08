@@ -41,7 +41,7 @@ The repository follows a multi-framework architecture:
 5. Configures kubectl context (cluster name)
 6. Deploys framework application from `kube.yaml` (templated with ECR image URI)
 7. Installs metrics-server (best effort) and waits for pods to be ready using kubectl
-8. Discovers annotated LoadBalancer services
+8. Discovers annotated LoadBalancer services (the k6 host later verifies `/api/ssrt` on each matches `SSRT_ENABLED`)
 9. Waits for NLB hostnames to be assigned
 10. Launches EC2 instance running k6 load tests against NLB endpoints
 11. Monitors console output, samples `kubectl top pods` every 30s into `logs/pod-usage_<timestamp>.log`, and displays results
@@ -99,7 +99,7 @@ Optional (with defaults):
 - `LOADTESTING_INSTANCE_TYPE` - EC2 instance type for k6 (default: `c7gn.2xlarge`, 16GB RAM for 10k VUs)
 - `ECR_REPO_NAME` - ECR repository name (default: `watt-benchmark`)
 - `IMAGE_TAG` - Docker image tag (default: `next-ssrt-<SSRT_ENABLED>`)
-- `TARGET_RATE` - Peak k6 arrival rate in req/s for the main test (default: `600`)
+- `TARGET_RATE` - Peak k6 arrival rate in req/s for the main test (default: `200`)
 
 ## Framework Application Structure
 
@@ -144,7 +144,7 @@ npm run build    # Build app
 ### Load Testing
 
 The `loadtest.sh` script runs k6 load tests sequentially against all three services:
-- `TARGET_RATE` requests/second (default 600) for 120 seconds per service after a 60s ramp (Next.js) or 10000 req/s (React Router)
+- Next.js: `/sellers` only (the render-heavy page), `TARGET_RATE` requests/second (default 200) for 120 seconds per service after a 60s ramp; React Router: 10000 req/s
 - 480 second cooldown between tests
 - Tests run on separate EC2 instance within same VPC
 - Uses LoadBalancer URLs passed via `URL_NODE`, `URL_PM2`, `URL_WATT` environment variables

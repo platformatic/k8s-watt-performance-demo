@@ -144,9 +144,11 @@ RUN_ORDER=pm2,watt,node \
 ```
 
 The control and SSRT images both use `@platformatic/ssrt-next`; the only build
-difference is `experimental.ssrTemplates`. The SSRT Docker build fails if the
-compiled bundle contains no template call sites, so a mislabelled control image
-cannot be pushed.
+difference is `experimental.ssrTemplates`. Three guards abort a run whose image
+does not match its arm: the SSRT Docker build fails if the `/sellers` page bails
+out of template compilation or its chunk has no template call sites, the control
+build fails if any template is present, and the k6 host checks `/api/ssrt` on
+every service before generating load.
 
 ### Detached runs
 
@@ -228,5 +230,5 @@ Optional environment variables:
 | `IMAGE_TAG` | `next-ssrt-<SSRT_ENABLED>` | Docker image tag |
 | `SSRT_ENABLED` | `0` | Set to `1` to build the SSRT templates arm; `0` builds the control arm |
 | `RUN_ORDER` | `pm2,watt,node` | Comma-separated runner order for the load test |
-| `TARGET_RATE` | `600` | Peak k6 arrival rate (req/s) of the main test; the 6 vCPU per runner saturate around 750-800 req/s, so keep it below the knee |
+| `TARGET_RATE` | `200` | Peak k6 arrival rate (req/s) of the `/sellers` test; the 6 vCPU per runner saturate around 300 req/s on that page, so keep it below the knee |
 | `NPMRC_PATH` | `$HOME/.npmrc` | npm credentials file mounted during the Docker build |

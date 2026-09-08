@@ -36,10 +36,10 @@ ECR_REPO_NAME="${ECR_REPO_NAME:-watt-benchmark}"
 SSRT_ENABLED="${SSRT_ENABLED:-0}"
 IMAGE_TAG="${IMAGE_TAG:-next-ssrt-${SSRT_ENABLED}}"
 RUN_ORDER="${RUN_ORDER:-pm2,watt,node}"
-# Peak arrival rate of the main k6 test. The cluster (6 vCPU per runner)
-# saturates around 750-800 req/s for the mixed workload and 1000 req/s produced
-# a liveness-probe crash loop in every arm, so the default sits below the knee.
-TARGET_RATE="${TARGET_RATE:-600}"
+# Peak arrival rate of the main k6 test, which hits /sellers only. That page
+# costs ~2.5x the CPU of the old mixed workload (knee at 750-800 req/s on 6 vCPU
+# per runner), so the knee is ~300 req/s and the default sits below it.
+TARGET_RATE="${TARGET_RATE:-200}"
 NPMRC_PATH="${NPMRC_PATH:-$HOME/.npmrc}"
 S3_BUCKET_NAME=""  # Will be set dynamically with cluster name
 
@@ -1405,6 +1405,7 @@ yum install -y httpd-tools jq
 export URL_NODE="$url_node"
 export URL_PM2="$url_pm2"
 export URL_WATT="$url_watt"
+EXPECTED_SSRT="$SSRT_ENABLED"
 
 # These checks run on the load-test host because the benchmark NLBs are internal.
 check_endpoint() {
@@ -1435,11 +1436,40 @@ check_endpoint() {
     return 1
 }
 
+# The deployed image must match the requested arm: /api/ssrt returns the
+# build-time SSR templates flag, so a stale or mislabelled image aborts the run
+# before any load is generated.
+check_ssrt() {
+    local name="\$1"
+    local url="\$2"
+    local reported
+    reported=\$(curl -s --connect-timeout 10 --max-time 30 "\$url/api/ssrt" | jq -r '.ssrt' 2>/dev/null || echo "unknown")
+    local expected="false"
+    if [[ "\$EXPECTED_SSRT" == "1" ]]; then
+        expected="true"
+    fi
+
+    if [[ "\$reported" == "\$expected" ]]; then
+        echo "  \$name: ssrt=\$reported (expected \$expected)"
+        return 0
+    fi
+
+    echo "  \$name: ssrt=\$reported but expected \$expected (SSRT_ENABLED=\$EXPECTED_SSRT)"
+    return 1
+}
+
 echo "REMOTE HEALTH CHECKS"
 if ! check_endpoint "Node" "\$URL_NODE" || \
    ! check_endpoint "PM2" "\$URL_PM2" || \
    ! check_endpoint "Watt" "\$URL_WATT"; then
     echo "REMOTE_HEALTH_CHECKS_FAILED"
+    exit 1
+fi
+echo "SSRT FLAG CHECKS"
+if ! check_ssrt "Node" "\$URL_NODE" || \
+   ! check_ssrt "PM2" "\$URL_PM2" || \
+   ! check_ssrt "Watt" "\$URL_WATT"; then
+    echo "REMOTE_HEALTH_CHECKS_FAILED: deployed image does not match SSRT_ENABLED"
     exit 1
 fi
 echo "REMOTE_HEALTH_CHECKS_PASSED"

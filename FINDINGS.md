@@ -335,3 +335,40 @@ Same picture as §9.2/§10.1: the only route that moves clearly is the 147 KB
 sellers page; everything else is within run-to-run noise of a few percent.
 The cluster run needs the §10.3 harness changes to have any chance of showing
 that delta.
+
+## 12. Sellers-only benchmark with SSRT fail-fast guards (2026-09-08)
+
+Second cluster pair (`2026-09-07-002`, 600 req/s, mixed workload) was clean
+(100% success, no restarts) but SSRT landed within noise: PM2 +16% avg latency,
+Watt flat, Node -8% latency / -7% CPU. Weighted over the mix the render share
+is too small (§9.2), so the load test now targets the one route where render
+dominates.
+
+### 12.1 Load test (`next/loadtest.sh`)
+- k6 main scenario requests only `/sellers`; pre-flight and both warm-ups hit
+  `/sellers` too. Per-route table kept (one row).
+- `TARGET_RATE` default 600 -> 200 (also in `benchmark.sh`, README, CLAUDE.md):
+  `/sellers` costs ~2.5x the old mix, so the knee moves from ~750 to ~300 req/s.
+
+### 12.2 Fail fast when SSRT is not really active
+- `next/scripts/check-ssrt-templates.cjs` (new): runs the compiler plugin on
+  `src/app/layout.tsx` and `src/app/sellers/page.tsx` in flight mode with
+  `enableJsxTemplateBailoutDiagnostics` and fails on any bailed element, compile
+  error, or untemplated file. Current result: layout 9 templated / 0 bailed,
+  sellers 12 templated / 0 bailed.
+- `next/Dockerfile`: runs that script before the build for `SSRT_ENABLED=1`;
+  after the build, the chunk bundling `src/app/sellers/page.tsx` must contain
+  template call sites for the SSRT arm (currently 3 of 57), and the control arm
+  must contain none. Both arms verified with local Docker builds.
+- `next/src/app/api/ssrt/route.ts` (new): returns the build-time `__NEXT_SSRT`
+  flag (`{"ssrt":true|false}`, verified for both local builds).
+- `benchmark.sh`: the remote health checks on the k6 host now call `/api/ssrt`
+  on all three services and emit `REMOTE_HEALTH_CHECKS_FAILED` when the flag
+  does not match `SSRT_ENABLED`, which aborts the run and triggers cleanup
+  before any load is generated.
+
+### 12.3 Expectation for the next pair
+Local single-process numbers for `/sellers`: control ~216 req/s, SSRT ~280
+req/s (+30%). At 200 req/s the delta should show as ~25% lower pod CPU in
+`logs/pod-usage_*.log` and lower latency in the Node arm, which is closest to
+saturation. Pushing `TARGET_RATE` to ~300 should saturate control before SSRT.

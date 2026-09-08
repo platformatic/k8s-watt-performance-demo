@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # E-commerce Load Test Script
-# Tests realistic e-commerce scenarios: homepage, search, card details, game browsing, sellers
-# Produces verbose output for debugging
+# Tests the /sellers page only: it is the render-heavy route (~147 KB of HTML)
+# where SSR templates make a measurable difference. Produces verbose output for
+# debugging.
 
 set -e
 
@@ -13,10 +14,10 @@ if [ -z "$URL_NODE" ] || [ -z "$URL_PM2" ] || [ -z "$URL_WATT" ]; then
 fi
 
 RUN_ORDER="${RUN_ORDER:-pm2,watt,node}"
-# Peak arrival rate of the main test. The cluster (6 vCPU per runner) saturates
-# around 750-800 req/s for the mixed workload; 1000 req/s produced a crash loop
-# in every arm, so the default sits below the knee.
-TARGET_RATE="${TARGET_RATE:-600}"
+# Peak arrival rate of the main test. /sellers costs ~2.5x the CPU of the old
+# mixed workload, whose knee was 750-800 req/s on 6 vCPU per runner, so the
+# knee for this test is ~300 req/s and the default sits below it.
+TARGET_RATE="${TARGET_RATE:-200}"
 
 run_named() {
   local phase=$1
@@ -50,7 +51,7 @@ echo "  - Pre-test warm-up: 20s per endpoint (50->400 req/s ramp)"
 echo "  - Post-warmup wait: 60s before main test"
 echo "  - Test duration: 60s ramp-up (0->${TARGET_RATE} req/s) + 120s @ ${TARGET_RATE} req/s"
 echo "  - Cooldown: 480s between tests"
-echo "  - Scenarios: Homepage, Search, Card Detail, Game Browse, Sellers"
+echo "  - Scenario: /sellers only (render-heavy page)"
 echo "========================================================================"
 
 # Pre-flight connectivity check
@@ -89,9 +90,9 @@ check_endpoint() {
   return 1
 }
 
-check_endpoint "PM2" "$URL_PM2/"
-check_endpoint "Watt" "$URL_WATT/"
-check_endpoint "Node" "$URL_NODE/"
+check_endpoint "PM2" "$URL_PM2/sellers"
+check_endpoint "Watt" "$URL_WATT/sellers"
+check_endpoint "Node" "$URL_NODE/sellers"
 
 echo "========================================================================"
 
@@ -132,7 +133,7 @@ export default function () {
 EOF
 )
 
-# E-commerce k6 test script - mixed realistic scenarios
+# E-commerce k6 test script - /sellers only
 K6_ECOMMERCE_SCRIPT=$(cat <<'EOF'
 import http from 'k6/http';
 import { check, sleep } from 'k6';
@@ -143,12 +144,17 @@ const requestErrors = new Counter('request_errors');
 const successfulRequests = new Counter('successful_requests');
 const responseTime = new Trend('response_time_ms');
 
-// Sample data for realistic requests
-const SEARCH_QUERIES = ['pikachu', 'charizard', 'dragon', 'rare', 'ex', 'magic', 'yugioh'];
-const GAME_SLUGS = ['pokemon', 'magic', 'yugioh', 'digimon', 'onepiece'];
-const SET_SLUGS = ['scarlet-violet', 'paldea-evolved', 'murders-at-karlov-manor', 'phantom-nightmare'];
+const TARGET_RATE = parseInt(__ENV.TARGET_RATE || '200', 10);
+const ROUTES = ['sellers_list'];
 
-const TARGET_RATE = parseInt(__ENV.TARGET_RATE || '600', 10);
+// k6 only reports tagged sub-metrics that a threshold references, so declare a
+// never-failing threshold per route to get per-route latency and counts.
+const routeThresholds = {};
+for (const name of ROUTES) {
+  routeThresholds['http_req_duration{name:' + name + '}'] = ['p(99)<600000'];
+  routeThresholds['http_req_failed{name:' + name + '}'] = ['rate<=1'];
+  routeThresholds['http_reqs{name:' + name + '}'] = ['count>=0'];
+}
 
 export const options = {
   summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
@@ -167,6 +173,7 @@ export const options = {
   },
   thresholds: {
     http_req_failed: ['rate<0.1'],
+    ...routeThresholds,
   },
 };
 
@@ -188,42 +195,7 @@ function makeRequest(url, name) {
 }
 
 export default function () {
-  const BASE = __ENV.TARGET;
-
-  // Randomly select scenario (weighted distribution)
-  const rand = Math.random();
-
-  if (rand < 0.20) {
-    // 20% - Homepage
-    makeRequest(BASE + '/', 'homepage');
-  } else if (rand < 0.45) {
-    // 25% - Search with query
-    const query = SEARCH_QUERIES[Math.floor(Math.random() * SEARCH_QUERIES.length)];
-    const page = Math.floor(Math.random() * 5) + 1;
-    makeRequest(BASE + '/search?q=' + query + '&page=' + page, 'search');
-  } else if (rand < 0.65) {
-    // 20% - Card detail (random card ID)
-    const gameId = GAME_SLUGS[Math.floor(Math.random() * GAME_SLUGS.length)];
-    const setNum = String(Math.floor(Math.random() * 10) + 1).padStart(2, '0');
-    const cardNum = String(Math.floor(Math.random() * 200) + 1).padStart(3, '0');
-    const cardId = gameId + '-set-' + setNum + '-' + cardNum;
-    makeRequest(BASE + '/cards/' + cardId, 'card_detail');
-  } else if (rand < 0.80) {
-    // 15% - Game detail
-    const gameSlug = GAME_SLUGS[Math.floor(Math.random() * GAME_SLUGS.length)];
-    makeRequest(BASE + '/games/' + gameSlug, 'game_detail');
-  } else if (rand < 0.90) {
-    // 10% - Games list
-    makeRequest(BASE + '/games', 'games_list');
-  } else if (rand < 0.95) {
-    // 5% - Sellers list
-    makeRequest(BASE + '/sellers', 'sellers_list');
-  } else {
-    // 5% - Set detail (random set)
-    const setSlug = SET_SLUGS[Math.floor(Math.random() * SET_SLUGS.length)];
-    const page = Math.floor(Math.random() * 3) + 1;
-    makeRequest(BASE + '/sets/' + setSlug + '?page=' + page, 'set_detail');
-  }
+  makeRequest(__ENV.TARGET + '/sellers', 'sellers_list');
 }
 
 export function handleSummary(data) {
@@ -251,6 +223,19 @@ export function handleSummary(data) {
     console.log('  p(95):           ' + rt['p(95)'].toFixed(2));
     console.log('  p(99):           ' + rt['p(99)'].toFixed(2));
   }
+  console.log('');
+  console.log('Per route (http_req_duration, ms):');
+  console.log('  route         reqs    fail%     avg     med   p(99)');
+  for (const name of ROUTES) {
+    const d = data.metrics['http_req_duration{name:' + name + '}'];
+    const n = data.metrics['http_reqs{name:' + name + '}'];
+    const f = data.metrics['http_req_failed{name:' + name + '}'];
+    if (!d || !n) continue;
+    const v = d.values;
+    console.log('  ' + name.padEnd(12) + String(n.values.count).padStart(7) +
+      ((f ? f.values.rate * 100 : 0).toFixed(2) + '%').padStart(9) +
+      v.avg.toFixed(0).padStart(8) + v.med.toFixed(0).padStart(8) + v['p(99)'].toFixed(0).padStart(8));
+  }
   console.log('========================================\n');
 
   return {};
@@ -267,7 +252,7 @@ run_warmup() {
   echo "Target: $url"
   echo "Duration: 60s (10->500 req/s ramp)"
   echo "========================================================================"
-  echo "$K6_WARMUP_SCRIPT" | k6 run --quiet -e TARGET="$url" - || echo "WARN: warm-up for $name exited nonzero"
+  echo "$K6_WARMUP_SCRIPT" | k6 run --quiet -e TARGET="$url/sellers" - || echo "WARN: warm-up for $name exited nonzero"
   echo "Warm-up complete for $name"
 }
 
@@ -278,7 +263,7 @@ run_pre_test_warmup() {
   echo "------------------------------------------------------------------------"
   echo "Pre-test warm-up: $name (20s @ 50->400 req/s)"
   echo "------------------------------------------------------------------------"
-  echo "$K6_WARMUP_SCRIPT" | k6 run --quiet -e TARGET="$url" - --duration 20s || echo "WARN: pre-test warm-up for $name exited nonzero"
+  echo "$K6_WARMUP_SCRIPT" | k6 run --quiet -e TARGET="$url/sellers" - --duration 20s || echo "WARN: pre-test warm-up for $name exited nonzero"
 }
 
 run_ecommerce_test() {
@@ -288,7 +273,7 @@ run_ecommerce_test() {
   echo "========================================================================"
   echo "E-COMMERCE LOAD TEST: $name"
   echo "Target: $url"
-  echo "Duration: 60s ramp-up + 120s @ ${TARGET_RATE} req/s (mixed scenarios)"
+  echo "Duration: 60s ramp-up + 120s @ ${TARGET_RATE} req/s (/sellers only)"
   echo "========================================================================"
 
   # Pre-test warm-up

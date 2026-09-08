@@ -32,16 +32,31 @@ ENV WORKERS=2
 ENV BACKLOG=511
 ENV NODE_ENV=production
 
+# SSRT arm: the components on the /sellers render path must compile into
+# templates without bailouts, otherwise the arm would measure plain rendering.
+RUN if [ "$SSRT_ENABLED" = "1" ]; then \
+      node scripts/check-ssrt-templates.cjs src/app/layout.tsx src/app/sellers/page.tsx; \
+    fi
+
 RUN npm run build
 
-# When the SSRT arm is requested, fail the build if no component was actually
-# compiled into templates. Turbopack silently skips the template loader when its
-# rules do not match the app directory, which would ship a control image
-# labelled as SSRT. Busybox grep has no --include, hence the find pipeline.
-RUN if [ "$SSRT_ENABLED" = "1" ]; then \
-      count=$(find .next/server -name "*.js" -exec grep -ohE "flightTemplate|jsxTemplate|renderTemplate" {} + | wc -l); \
-      echo "SSRT template call sites: $count"; \
-      if [ "$count" -eq 0 ]; then echo "SSRT_ENABLED=1 but no SSR templates were compiled" >&2; exit 1; fi; \
+# Fail the build when the compiled bundle does not match the requested arm.
+# SSRT arm: the Turbopack chunk that bundles src/app/sellers/page.tsx (the only
+# page the load test hits) must contain template call sites; templates elsewhere
+# do not count. Control arm: no template call sites anywhere. Busybox grep has
+# no --include, hence the find pipelines.
+RUN total=$(find .next/server -name "*.js" -exec grep -ohE "flightTemplate|jsxTemplate|renderTemplate" {} + | wc -l); \
+    sellers=0; \
+    for chunk in $(find .next/server -name "*.js" -exec grep -l "src/app/sellers/page.tsx" {} +); do \
+      n=$(grep -oE "flightTemplate|jsxTemplate|renderTemplate" "$chunk" | wc -l); \
+      sellers=$((sellers + n)); \
+    done; \
+    echo "SSRT template call sites: total=$total sellers-page-chunks=$sellers"; \
+    if [ "$SSRT_ENABLED" = "1" ] && [ "$sellers" -eq 0 ]; then \
+      echo "SSRT_ENABLED=1 but the sellers page was not compiled into templates" >&2; exit 1; \
+    fi; \
+    if [ "$SSRT_ENABLED" != "1" ] && [ "$total" -ne 0 ]; then \
+      echo "SSRT_ENABLED=$SSRT_ENABLED but the bundle contains SSR templates" >&2; exit 1; \
     fi
 
 ENTRYPOINT ["./entrypoint.sh"]
